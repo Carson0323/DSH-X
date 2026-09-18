@@ -138,6 +138,7 @@ async function assemble() {
   await cp(join(ROOT, 'public'), join(OUT, 'public'), { recursive: true })
   await cp(join(ROOT, 'assets'), join(OUT, 'assets'), { recursive: true })
   await cp(join(ROOT, 'perf'), join(OUT, 'perf'), { recursive: true })
+  await cp(join(ROOT, 'compat'), join(OUT, 'compat'), { recursive: true })
   await copyNodeRuntime()
   await cp(join(ROOT, 'node_modules'), join(OUT, 'node_modules'), { recursive: true })
   await copyFile(

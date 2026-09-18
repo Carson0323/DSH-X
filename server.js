@@ -338,8 +338,14 @@ function dshEnv(version) {
     DSH_BIN: binPath(version),
     DSH_VERSION: version,
     DSH_PROFILE: PROFILE_NAME,
-    // 浏览器里堆积的 cookie 会顶爆默认 16KB 的请求头上限（HTTP 431），一并放宽
-    NODE_OPTIONS: [process.env.NODE_OPTIONS, '--max-http-header-size=131072'].filter(Boolean).join(' '),
+    // 浏览器里堆积的 cookie 会顶爆默认 16KB 的请求头上限（HTTP 431），一并放宽；
+    // --require 用于把会话事件兼容补丁带进 dsh 起的 worker 线程
+    NODE_OPTIONS: [
+      process.env.NODE_OPTIONS,
+      '--max-http-header-size=131072',
+      // NODE_OPTIONS 用空格分词、引号会被剥掉，Windows 反斜杠会被当转义吃没，统一用正斜杠
+      existsSync(WORKER_COMPAT) ? `--require ${WORKER_COMPAT.replace(/\\/g, '/')}` : '',
+    ].filter(Boolean).join(' '),
     npm_config_ignore_workspace_root_check: 'true',
     PATH: withBundledRuntime(process.env.PATH || ''),
   }
@@ -369,15 +375,19 @@ function bootArgs() {
   return [PROFILE_NAME, '--host', '127.0.0.1', '--port', '0', '--no-open']
 }
 
-/** 启动加速钩子：把 dsh 合成客户端 bundle 时的两处慢实现换成等价快实现（约省 2-3 秒）。 */
-const PERF_HOOK = join(ROOT, 'perf', 'register.mjs')
+/** dsh 子进程的加载钩子：启动加速 + 会话事件词汇兼容（含 worker 线程那份）。 */
+const HOOKS = [
+  join(ROOT, 'perf', 'register.mjs'),
+  join(ROOT, 'compat', 'register.mjs'),
+].filter((file) => existsSync(file))
+
+/** worker 线程用 --require 注入（execArgv 被清空，只有 NODE_OPTIONS 能传进去）。 */
+const WORKER_COMPAT = join(ROOT, 'compat', 'worker-events.cjs')
 
 function spawnDsh(version, extra) {
   const home = homeDir()
   const bin = binPath(version)
-  const args = existsSync(PERF_HOOK)
-    ? ['--import', pathToFileURL(PERF_HOOK).href, bin, ...extra]
-    : [bin, ...extra]
+  const args = [...HOOKS.flatMap((file) => ['--import', pathToFileURL(file).href]), bin, ...extra]
   return spawn(process.execPath, args, {
     cwd: home,
     env: dshEnv(version),
@@ -396,8 +406,18 @@ async function ensureProfileNpmrc() {
   } catch {
     text = ''
   }
-  if (/(^|\n)ignore-workspace-root-check\s*=/.test(text)) return
-  await writeFile(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}ignore-workspace-root-check=true\n`)
+  const missing = []
+  if (!/(^|\n)ignore-workspace-root-check\s*=/.test(text)) missing.push('ignore-workspace-root-check=true')
+  // dsh 自己的 profile 模板把 autoInstallPeers: false 写在 pnpm-workspace.yaml 里，
+  // 但启动器内置的 pnpm 8 只认 .npmrc（那套设置要 pnpm 10.6 起才读 yaml）。一旦 pnpm
+  // 自动装 peer，它会把所有插件对同一 @deepseek-ai/* 的 peer 区间求交，而求交库里
+  // 的 stripSemVerPrerelease 会把预发布号删掉——^0.1.0-rc.8 ∩ ^0.1.2-rc.1 变成
+  // `>=0.1.2 <0.2.0-0`，可这些包在 registry 上只有预发布版，于是整个安装在
+  // ERR_PNPM_NO_MATCHING_VERSION 上硬失败。补这一行就等于替 pnpm 8 认下 dsh 的本意。
+  if (!/(^|\n)auto-install-peers\s*=/.test(text)) missing.push('auto-install-peers=false')
+  if (!missing.length) return
+  const head = text && !text.endsWith('\n') ? `${text}\n` : text
+  await writeFile(file, `${head}${missing.join('\n')}\n`)
 }
 
 async function fetchRemote() {
@@ -821,6 +841,9 @@ async function startWithRepair(version) {
   const autoDisabled = new Set()
   let depsRepaired = false
   let lastError
+  // 每次启动都补齐 profile 的 .npmrc：插件市场的安装也会走这个文件，
+  // 早于任何一次 add 就有这行，市场里点安装才不会撞上 peer 求交那个坑
+  await ensureProfileNpmrc().catch(() => {})
   for (;;) {
     try {
       return await startNow(version)
