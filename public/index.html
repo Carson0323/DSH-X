@@ -3,19 +3,20 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DSH启动器</title>
+  <title>DSH-X</title>
   <link rel="icon" href="/favicon.ico?v=dsh" sizes="any" />
   <link rel="icon" type="image/png" href="/favicon.png?v=dsh" />
   <style>
     :root {
-      --bg: #090909;
-      --card: #111;
-      --line: #2a2a2a;
-      --text: #f2f2f2;
-      --muted: #8a8a8a;
-      --accent: #fff;
-      --accent-dim: #1c1c1c;
-      --danger: #fff;
+      --bg: #eef3fd;
+      --card: #fff;
+      --line: #d8e2f7;
+      --text: #16233d;
+      --muted: #6b7d9c;
+      --accent: #3b6fe0;
+      --accent-soft: #eaf1ff;
+      --accent-dim: #e2ebff;
+      --danger: #e11d48;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; }
@@ -26,33 +27,49 @@
       display: grid;
       grid-template-rows: auto 1fr;
     }
+    /* 背景虚影：右下角一张很大的淡图标，白底乘上去等于没画，只留下头发那点蓝 */
+    .backdrop {
+      position: fixed;
+      left: -6vh;
+      bottom: -8vh;
+      width: min(68vh, 56vw);
+      height: min(68vh, 56vw);
+      background: url("/icon.png") center / contain no-repeat;
+      opacity: 0.14;
+      mix-blend-mode: multiply;
+      filter: blur(2.5px) saturate(0.9);
+      pointer-events: none;
+      z-index: 0;
+    }
+    header, main { position: relative; z-index: 1; }
     header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 18px 28px;
     }
-    .brand { font-weight: 650; letter-spacing: 0.04em; font-size: 16px; }
+    .brand { font-weight: 650; letter-spacing: 0.04em; font-size: 16px; color: var(--accent); }
     .brand-block { display: flex; align-items: baseline; gap: 10px; }
     .app-ver { color: var(--muted); font-size: 12px; }
     .app-ver:empty { display: none; }
     .self-update {
       border: 0;
       background: var(--accent);
-      color: #111;
+      color: #fff;
       font: 600 12px/1 inherit;
       padding: 6px 12px;
       border-radius: 999px;
       cursor: pointer;
     }
-    .self-update:hover { filter: brightness(0.92); }
+    .self-update:hover { filter: brightness(0.94); }
     .self-update[hidden] { display: none; }
-    nav { display: flex; gap: 4px; background: #0c0c0c; padding: 4px; border-radius: 999px; border: 1px solid var(--line); }
+    nav { display: flex; gap: 4px; background: var(--accent-soft); padding: 4px; border-radius: 999px; border: 1px solid var(--line); }
     nav button {
       border: 0; background: transparent; color: var(--muted);
       padding: 6px 14px; border-radius: 999px; cursor: pointer; font: inherit;
     }
-    nav button.active { background: var(--accent); color: #111; }
+    nav button:hover { color: var(--accent); }
+    nav button.active { background: var(--accent); color: #fff; }
     main { min-height: 0; }
     .page { display: none; height: 100%; }
     .page.active { display: flex; }
@@ -63,6 +80,7 @@
       border: 1px solid var(--line);
       border-radius: 20px;
       padding: 24px;
+      box-shadow: 0 12px 32px rgba(59, 111, 224, 0.10);
     }
     .card.settings { width: min(560px, 100%); }
     .card.plugins {
@@ -89,7 +107,7 @@
     input[type=text] {
       width: 100%;
       appearance: none;
-      background: #0c0c0c;
+      background: #fff;
       color: var(--text);
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -97,7 +115,7 @@
       font: inherit;
     }
     input[type=text]:focus { outline: 1px solid var(--accent); }
-    /* 版本下拉：原生 select 的弹出列表无法跟随深色主题，这里整套自绘 */
+    /* 版本下拉：原生 select 的弹出列表没法跟随页面配色，这里整套自绘 */
     .select { position: relative; }
     .select-trigger {
       width: 100%;
@@ -105,7 +123,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      background: #0c0c0c;
+      background: #fff;
       color: var(--text);
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -115,10 +133,10 @@
       cursor: pointer;
       transition: border-color 0.15s ease, background 0.15s ease;
     }
-    .select-trigger:hover:not(:disabled) { border-color: #3a3a3a; }
+    .select-trigger:hover:not(:disabled) { border-color: #b9ccf0; }
     .select-trigger:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
     .select-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
-    .select.open .select-trigger { border-color: #4a4a4a; background: #101010; }
+    .select.open .select-trigger { border-color: var(--accent); background: #f8fbff; }
     .select-value {
       flex: 1;
       min-width: 0;
@@ -141,10 +159,10 @@
       top: calc(100% + 6px);
       z-index: 40;
       padding: 6px;
-      background: #101010;
+      background: #fff;
       border: 1px solid var(--line);
       border-radius: 14px;
-      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.6);
+      box-shadow: 0 18px 44px rgba(22, 35, 61, 0.18);
       max-height: min(46vh, 340px);
       overflow-y: auto;
       animation: select-in 0.12s ease;
@@ -166,8 +184,8 @@
       cursor: pointer;
     }
     .select-option + .select-option { margin-top: 1px; }
-    .select-option.active { background: #1e1e1e; }
-    .select-option.selected { background: #262626; }
+    .select-option.active { background: var(--accent-soft); }
+    .select-option.selected { background: var(--accent-dim); color: var(--accent); }
     .select-option.selected .opt-name { font-weight: 600; }
     .select-option .opt-name {
       min-width: 0;
@@ -184,7 +202,7 @@
       border-radius: 999px;
       padding: 2px 8px;
     }
-    .select-option.selected .opt-badge { color: var(--text); border-color: #3d3d3d; }
+    .select-option.selected .opt-badge { color: var(--accent); border-color: #b9ccf0; }
     .select-option.more {
       justify-content: center;
       color: var(--muted);
@@ -193,7 +211,7 @@
       border-top: 1px solid var(--line);
       border-radius: 0 0 9px 9px;
     }
-    .select-option.more.active { background: #1a1a1a; color: var(--text); }
+    .select-option.more.active { background: var(--accent-soft); color: var(--accent); }
     .toggle {
       display: flex;
       align-items: center;
@@ -211,7 +229,7 @@
       height: 26px;
       margin: 0;
       flex: 0 0 auto;
-      background: #2a2a2a;
+      background: #cfdcf3;
       border: 0;
       border-radius: 999px;
       position: relative;
@@ -225,19 +243,20 @@
       left: 3px;
       width: 20px;
       height: 20px;
-      background: #f2f2f2;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(22, 35, 61, 0.25);
       border-radius: 50%;
       transition: transform 0.15s ease;
     }
     .toggle input:checked { background: var(--accent); }
-    .toggle input:checked::after { background: #111; transform: translateX(18px); }
+    .toggle input:checked::after { transform: translateX(18px); }
     .toggle input:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
     .hint { color: var(--muted); font-size: 13px; margin: 12px 0 0; min-height: 1.5em; }
-    .hint a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+    .hint a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
     .progress {
       margin-top: 12px;
       height: 4px;
-      background: #2a2a2a;
+      background: #dbe5fb;
       border-radius: 999px;
       overflow: hidden;
     }
@@ -245,7 +264,7 @@
     .progress-bar {
       height: 100%;
       width: 0;
-      background: #fff;
+      background: var(--accent);
       border-radius: 999px;
       transition: width 0.15s ease;
     }
@@ -261,7 +280,7 @@
       width: 100%;
       border: 0;
       background: var(--accent);
-      color: #111;
+      color: #fff;
       font: 600 15px/1 inherit;
       padding: 13px 16px;
       border-radius: 12px;
@@ -271,6 +290,7 @@
       justify-content: center;
       gap: 8px;
     }
+    .primary:hover:not(:disabled) { background: #3462cb; }
     .primary:disabled { opacity: 0.45; cursor: not-allowed; }
     .primary.loading { opacity: 1; cursor: wait; }
     .controls {
@@ -302,20 +322,27 @@
       flex: 0 0 auto;
       border: 0;
       background: var(--accent);
-      color: #111;
+      color: #fff;
     }
+    #main.icon-btn:hover:not(:disabled) { background: #3462cb; }
     #main.icon-btn.stop {
-      background: #fff;
-      color: #e11d48;
-      border: 0;
+      background: #fff1f2;
+      color: var(--danger);
+      border: 1px solid #f7ccd2;
     }
+    #main.icon-btn.stop:hover { background: #ffe7ea; }
     #restart.icon-btn,
     #update.icon-btn,
     #remove.icon-btn {
       border: 1px solid var(--line);
-      background: transparent;
-      color: var(--text);
+      background: #fff;
+      color: var(--accent);
     }
+    #restart.icon-btn:hover:not(:disabled),
+    #update.icon-btn:hover:not(:disabled),
+    #remove.icon-btn:hover:not(:disabled) { background: var(--accent-soft); border-color: #b9ccf0; }
+    #remove.icon-btn { color: var(--muted); }
+    #remove.icon-btn:hover:not(:disabled) { background: #fff1f2; border-color: #f7ccd2; color: var(--danger); }
     .icon-btn[hidden] { display: none; }
     .icon-btn.loading svg { display: none; }
     .spin {
@@ -332,17 +359,17 @@
     #page-log { flex-direction: column; padding: 0 28px 28px; }
     .logbar { display: flex; justify-content: flex-end; padding: 8px 0; }
     .logbar button {
-      border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit;
+      border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit;
     }
     #log {
       flex: 1;
       margin: 0;
       overflow: auto;
-      background: #050505;
+      background: #f7faff;
       border: 1px solid var(--line);
       border-radius: 16px;
       padding: 16px;
-      color: #9a9a9a;
+      color: #3f5478;
       font: 12px/1.45 ui-monospace, Consolas, monospace;
       white-space: pre-wrap;
     }
@@ -356,9 +383,9 @@
     .plugin-title { color: var(--text); font-size: 15px; font-weight: 650; letter-spacing: 0.02em; }
     .plugin-sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
     .ghost {
-      border: 1px solid var(--line);
-      background: transparent;
-      color: var(--muted);
+      border: 1px solid #c7d8f7;
+      background: #fff;
+      color: var(--accent);
       font: inherit;
       font-size: 12px;
       padding: 5px 12px;
@@ -366,7 +393,7 @@
       cursor: pointer;
       flex: 0 0 auto;
     }
-    .ghost:hover { color: var(--text); border-color: #3d3d3d; }
+    .ghost:hover:not(:disabled) { background: var(--accent-soft); border-color: #b9ccf0; }
     .ghost:disabled { opacity: 0.5; cursor: default; }
     .plugin-list {
       flex: 1 1 auto;
@@ -385,7 +412,7 @@
       border-radius: 10px;
       transition: background 0.12s ease;
     }
-    .plugin-row:hover { background: #161616; }
+    .plugin-row:hover { background: var(--accent-soft); }
     .plugin-row:last-child { border-bottom: 0; }
     .plugin-row.off .plugin-name { color: var(--muted); font-weight: 500; }
     .plugin-row.off .plugin-meta { opacity: 0.75; }
@@ -394,8 +421,8 @@
     .plugin-name { color: var(--text); font-weight: 600; font-size: 14px; letter-spacing: 0; overflow-wrap: anywhere; }
     .plugin-meta { color: var(--muted); font-size: 12px; letter-spacing: 0; overflow-wrap: anywhere; }
     .plugin-empty { color: var(--muted); font-size: 13px; padding: 10px 8px; }
-    /* 深色滚动条：默认亮色条在暗色面板上很扎眼，统一成细灰条 */
-    .select-panel, .plugin-list, #log { scrollbar-width: thin; scrollbar-color: #333 transparent; }
+    /* 细滚动条：默认亮灰条在浅色面板上太抢眼，统一成淡蓝灰 */
+    .select-panel, .plugin-list, #log { scrollbar-width: thin; scrollbar-color: #c3d3ee transparent; }
     .select-panel::-webkit-scrollbar, .plugin-list::-webkit-scrollbar, #log::-webkit-scrollbar {
       width: 8px;
       height: 8px;
@@ -404,21 +431,22 @@
       background: transparent;
     }
     .select-panel::-webkit-scrollbar-thumb, .plugin-list::-webkit-scrollbar-thumb, #log::-webkit-scrollbar-thumb {
-      background: #333;
+      background: #c3d3ee;
       border-radius: 999px;
       border: 2px solid transparent;
       background-clip: content-box;
     }
     .select-panel::-webkit-scrollbar-thumb:hover, .plugin-list::-webkit-scrollbar-thumb:hover, #log::-webkit-scrollbar-thumb:hover {
-      background: #4d4d4d;
+      background: #a3bcea;
       background-clip: content-box;
     }
   </style>
 </head>
 <body>
+  <div class="backdrop" aria-hidden="true"></div>
   <header>
     <div class="brand-block">
-      <div class="brand">DSH启动器</div>
+      <div class="brand">DSH-X</div>
       <span class="app-ver" id="appVer">__APP_VERSION__</span>
       <button type="button" class="self-update" id="selfUpdate" hidden>更新</button>
     </div>
@@ -664,6 +692,7 @@
     let barMaxPct = 0
     // 下拉默认只列已装 + 最新 + 最近几个版本，其余折起来（原生下拉太长会顶出屏幕）
     const RECENT_REMOTE_LIMIT = 5
+    const EXPERIMENTAL = /-(?:alpha|beta)\b/i
     let showAllVersions = false
     const fromLauncher = new URLSearchParams(location.search).has('launch')
     let launchFollowed = false
@@ -792,9 +821,49 @@
       return visibleVersionList(allVersionList())
     }
 
-    function latestRemoteVersion() {
-      const tagged = typeof remote.tags?.latest === 'string' ? remote.tags.latest.trim() : ''
-      return tagged || versionNames(remote.versions)[0] || ''
+    /** 版本比较，规则与 registry.js 的 cmpVer 一致：正式版 > 预发布版，预发布段按字符串比。 */
+    function compareVersion(a, b) {
+      const split = (value) => {
+        const m = String(value ?? '').trim().match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?$/)
+        return m ? [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0), m[4] || ''] : null
+      }
+      const left = split(a)
+      const right = split(b)
+      if (!left || !right) return String(a) === String(b) ? 0 : String(a) > String(b) ? 1 : -1
+      for (let i = 0; i < 3; i += 1) {
+        if (left[i] !== right[i]) return left[i] > right[i] ? 1 : -1
+      }
+      if (left[3] === right[3]) return 0
+      if (!left[3]) return 1
+      if (!right[3]) return -1
+      return left[3] > right[3] ? 1 : -1
+    }
+
+    /**
+     * "最新"不能只看 npm 的 latest 标签：dsh 发布时常把新的 rc 挂在 next 上，latest
+     * 还指着上一个（0.1.5-rc.2 就是这样被 0.1.5-rc.1 比下去的），界面于是给已装
+     * rc.2 的人一个往回降级的"更新"按钮。改成在已发布版本里取最高的那个。
+     *
+     * 但"忽略 alpha/beta"只对走在正式渠道的人成立：已经装了 0.1.6-alpha.2 的人若
+     * 还按忽略 alpha 算，最高只会得到更老的 0.1.5-rc.2，反而提示他"更新"（其实是
+     * 降级）。所以候选集跟着当前选中的版本走——选中的是 alpha/beta 就把实验版算
+     * 进去，否则维持"不被实验版打扰"。
+     */
+    function latestRemoteVersion(version = versionValue) {
+      const experimental = EXPERIMENTAL.test(String(version || ''))
+      const candidates = []
+      for (const name of ['latest', 'next', 'alpha']) {
+        const tag = typeof remote.tags?.[name] === 'string' ? remote.tags[name].trim() : ''
+        if (tag && (experimental || !EXPERIMENTAL.test(tag))) candidates.push(tag)
+      }
+      for (const item of versionNames(remote.versions)) {
+        if (experimental || !EXPERIMENTAL.test(item)) candidates.push(item)
+      }
+      let best = ''
+      for (const item of candidates) {
+        if (!best || compareVersion(item, best) > 0) best = item
+      }
+      return best
     }
 
     function preferredPick() {
@@ -803,7 +872,7 @@
       if (userPicked && picked && versions.includes(picked)) return picked
       const running = runningInfo()
       if (running?.version && versions.includes(running.version)) return running.version
-      const latest = latestRemoteVersion()
+      const latest = latestRemoteVersion(running?.version || installed[0] || '')
       if (latest && installed.includes(latest)) return latest
       if (installed[0] && versions.includes(installed[0])) return installed[0]
       return latest || versions[0] || ''
@@ -819,11 +888,11 @@
       const versions = visibleVersionList(allVersions)
       const hidden = allVersions.length - versions.length
       const current = preferredPick() || versions[0] || ''
-      const latest = latestRemoteVersion()
+      const latest = latestRemoteVersion(current)
       const nextOptions = versions.map((version) => ({
         value: version,
         text: version,
-        badge: have.has(version) ? '已装' : version === latest ? '最新' : '',
+        badge: [have.has(version) ? '已装' : '', version === latest ? '最新' : ''].filter(Boolean).join(' · '),
       }))
       if (hidden > 0) nextOptions.push({ value: '__more__', text: `更多版本…（还有 ${hidden} 个）`, more: true })
       else if (showAllVersions && allVersions.length > RECENT_REMOTE_LIMIT + 2) {
@@ -845,7 +914,8 @@
       const stopping = (thisRun && running.status === 'stopping') || action === 'stop'
       const uninstalling = action === 'uninstall'
       const loading = installing || starting || stopping || uninstalling
-      const canUpdate = Boolean(latest && have.has(version) && version !== latest)
+      // 只有真的更高才提示更新：否则装了更新的实验版的人会被提示"更新"到更老的版本
+      const canUpdate = Boolean(latest && have.has(version) && compareVersion(latest, version) > 0)
       restartEl.hidden = !(thisRun && running.status === 'running') || loading
       updateEl.hidden = !(canUpdate || updating) || (loading && !updating)
       updateEl.disabled = loading
@@ -908,7 +978,7 @@
         return
       }
       if (have.has(version)) {
-        hintEl.textContent = latest && version !== latest
+        hintEl.textContent = latest && compareVersion(latest, version) > 0
           ? `已安装。可更新到 ${latest}。`
           : '已安装。插件和数据在用户目录的 .dsh。'
         setMainAction('play', '启动')
@@ -999,7 +1069,7 @@
       }
     }
     updateEl.onclick = async () => {
-      const latest = latestRemoteVersion()
+      const latest = latestRemoteVersion(selected())
       if (!latest) return
       const running = runningInfo()
       const wasLive = Boolean(running && (running.status === 'running' || running.status === 'starting'))

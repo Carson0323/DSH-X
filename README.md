@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/hero.png" alt="DSH启动器" width="880" />
+  <img src="docs/hero.png" alt="DSH-X" width="880" />
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@ DeepSeek Harness 轻量 Windows 启动器。选一个版本，启动 dsh web。
 
 ## 使用
 
-Windows 安装 [DSH-Setup.exe](https://github.com/yyh-001/dsh-launcher/releases/latest) 后，桌面打开 **DSH启动器**。管理页：`http://127.0.0.1:3780/`。
+Windows 安装 [DSH-Setup.exe](https://github.com/yyh-001/dsh-launcher/releases/latest) 后，桌面打开 **DSH-X**。管理页：`http://127.0.0.1:3780/`。
 
 ## 开发
 

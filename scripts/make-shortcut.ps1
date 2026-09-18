@@ -2,7 +2,7 @@
 $root = 'C:\Users\yyh\Desktop\dsh\strategies'
 $icon = Join-Path $root 'assets\dsh.ico'
 $vbs = Join-Path $root 'DSH.vbs'
-$wanted = Join-Path $desktop 'DSH启动器.lnk'
+$wanted = Join-Path $desktop 'DSH-X.lnk'
 
 Get-ChildItem $desktop -Filter 'DSH*.lnk' | Where-Object {
   $_.FullName -ne $wanted
@@ -19,7 +19,7 @@ $s.Arguments = '"' + $vbs + '"'
 $s.WorkingDirectory = $root
 $s.WindowStyle = 7
 $s.IconLocation = "$icon,0"
-$s.Description = 'DSH启动器'
+$s.Description = 'DSH-X'
 $s.Save()
 
 Add-Type -TypeDefinition @'

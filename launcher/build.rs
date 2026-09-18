@@ -6,8 +6,8 @@ fn main() {
         if icon.exists() {
             let mut res = winresource::WindowsResource::new();
             res.set_icon("../assets/dsh.ico");
-            res.set("ProductName", "DSH启动器");
-            res.set("FileDescription", "DSH启动器");
+            res.set("ProductName", "DSH-X");
+            res.set("FileDescription", "DSH-X");
             if let Err(error) = res.compile() {
                 println!("cargo:warning=embed icon failed: {error}");
             }

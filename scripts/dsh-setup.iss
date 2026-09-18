@@ -1,4 +1,4 @@
-#define MyAppName "DSH启动器"
+#define MyAppName "DSH-X"
 #define MyAppVersion "0.1.0"
 #define MyAppPublisher "yyh"
 #define MyAppExeName "DSH.exe"
