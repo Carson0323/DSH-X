@@ -13,6 +13,7 @@ import {
   ownerOfRow,
   parseFailedRows,
   parseUnresolvedBundles,
+  pluginsNamedInFailure,
   setPluginEnabled,
 } from './plugins.js'
 import {
@@ -32,7 +33,7 @@ let CONFIG = join(DATA, 'config.json')
 const PKG = '@deepseek-ai/dsh'
 const MARKET_PKG = 'dshmarket'
 const APP_VERSION = String(pkg.version || '0.0.0')
-const APP_REPO = 'yyh-001/dsh-launcher'
+const APP_REPO = 'yyh-001/DSH-X'
 const APP_SETUP = 'DSH-Setup.exe'
 const PORT = Number(process.env.PORT || 3780)
 const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]*$/
@@ -253,6 +254,39 @@ function emit(event, data) {
   for (const res of clients) res.write(payload)
 }
 
+/**
+ * 退出前的收尾：停掉跑着的 dsh，再通知开着的页面（浏览器里那些）自己关掉。
+ * 托盘退出和 /api/quit 都走这里。
+ */
+export async function shutdown() {
+  await Promise.race([
+    stopAll(),
+    new Promise((resolve) => setTimeout(resolve, 2000)),
+  ])
+  await notifyShutdown()
+}
+
+/**
+ * 退出前通知所有开着的管理页，让它们自己关掉——否则托盘退了，浏览器里还留着
+ * 一个连不上后端的死页面。等最后这段推出去再让调用方结束进程。
+ */
+export function notifyShutdown() {
+  return new Promise((resolve) => {
+    for (const res of clients) {
+      try {
+        res.write('event: bye\ndata: {}\n\n')
+      } catch { /* 这个页面已经断了 */ }
+    }
+    setTimeout(() => {
+      for (const res of clients) {
+        try { res.end() } catch { /* already gone */ }
+      }
+      clients.clear()
+      resolve()
+    }, 150)
+  })
+}
+
 async function snapshot() {
   const config = await loadConfig()
   const installed = listedVersions(config)
@@ -428,6 +462,8 @@ async function fetchRemote() {
     source: 'https://github.com/deepseek-ai/deepseek-harness',
     tags: info.tags,
     versions: info.versions,
+    // 「最新版」只在这里算一次，管理页和更新提示都读它，免得两处口径各算各的
+    latest: latestRemoteFor({ tags: info.tags, versions: info.versions }),
   }
   remoteCache = { at: Date.now(), data }
   return data
@@ -476,6 +512,179 @@ async function fetchLatestTag() {
   if (!page.ok) return null
   const match = /\/releases\/tag\/([^/?#]+)/.exec(page.url || '')
   return match ? stripTag(decodeURIComponent(match[1])) : null
+}
+
+/**
+ * 远端能给到的最新版。这里按用户的取舍把预发布也算数：装了 rc 的人应该被告知
+ * 更新的 alpha，而不是被“稳定版”的字面口径挡住。只看 latest 标签不够——dsh
+ * 常把新版本挂在 next / alpha 上。
+ */
+function latestRemoteFor(remote) {
+  const candidates = []
+  for (const name of ['latest', 'next', 'alpha']) {
+    const tag = typeof remote.tags?.[name] === 'string' ? remote.tags[name].trim() : ''
+    if (tag) candidates.push(tag)
+  }
+  for (const item of remote.versions || []) {
+    if (item) candidates.push(item)
+  }
+  let best = ''
+  let bestParsed = null
+  for (const item of candidates) {
+    const parsed = parseVer(item)
+    if (!parsed) continue
+    if (!bestParsed || cmpVer(parsed, bestParsed) > 0) {
+      best = item
+      bestParsed = parsed
+    }
+  }
+  return best
+}
+
+/** 更高才算更新；相等或更低都不打扰。 */
+function isNewer(latest, current) {
+  const next = parseVer(latest)
+  const cur = parseVer(current)
+  return Boolean(next && cur && cmpVer(next, cur) > 0)
+}
+
+/**
+ * 启动时要先问用户的那件事：dsh 本体或启动器自身有新版本。
+ * 有就返回详情（调用方据此跳过自动启动），都最新返回 null。
+ * 用户点过「不更新」的版本记在 settings 里，同一个版本不再问第二次。
+ * 网络失败一律当作「没有更新」，不能因为拉不到远端就把启动卡住。
+ */
+export async function pendingUpdate() {
+  const found = { dsh: null, self: null }
+  let skipped = {}
+  try {
+    skipped = (await loadSettings()).skippedUpdate || {}
+  } catch { /* 读不到设置就当没跳过 */ }
+  try {
+    const remote = await fetchRemote()
+    const installed = listedVersions(await loadConfig())
+    const current = installed[0] || ''
+    const latest = remote.latest || ''
+    if (isNewer(latest, current) && skipped.dsh !== latest) found.dsh = { current, latest }
+  } catch { /* 拉不到远端就当没更新 */ }
+  try {
+    const self = await checkSelfUpdate()
+    if (self.update && skipped.self !== self.latest) {
+      found.self = { current: self.current, latest: self.latest, url: self.url }
+    }
+  } catch { /* 同上 */ }
+  return found.dsh || found.self ? found : null
+}
+
+/**
+ * 记住用户点过「不更新」的版本，下次启动不再拿同一个版本打扰。
+ * 只收合法版本号，其余一律丢掉，免得把设置文件写脏。
+ */
+async function skipPendingUpdate(patch) {
+  const saved = (await loadSettings()).skippedUpdate || {}
+  const next = { ...saved }
+  for (const key of ['dsh', 'self']) {
+    const version = typeof patch?.[key] === 'string' ? patch[key].trim() : ''
+    if (version && VERSION_RE.test(version)) next[key] = version
+  }
+  await saveSettings({ skippedUpdate: next })
+  return { skippedUpdate: next }
+}
+
+const RELEASE_FEEDS = {
+  dsh: 'https://github.com/deepseek-ai/deepseek-harness/releases.atom',
+  self: `https://github.com/${APP_REPO}/releases.atom`,
+}
+const FEED_TTL_MS = 30 * 60 * 1000
+const RELEASE_VERSION_RE = /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/
+const feedCache = new Map()
+
+function decodeEntities(text) {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+}
+
+/**
+ * 把 release 正文的 HTML 折成 {type, text} 块。只认标题/段落/列表项，
+ * 其余标签一律剥掉——远端 HTML 绝不能直接进页面。
+ */
+function parseNotes(html) {
+  const text = decodeEntities(html)
+    .replace(/<\/?(?:ul|ol)\b[^>]*>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+  const blocks = []
+  const re = /<(h[1-6]|p|li)\b[^>]*>([\s\S]*?)<\/\1>/gi
+  let match
+  while ((match = re.exec(text))) {
+    const body = decodeEntities(match[2].replace(/<[^>]+>/g, ' '))
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!body) continue
+    const tag = match[1].toLowerCase()
+    blocks.push({ type: tag === 'li' ? 'li' : tag[0] === 'h' ? 'h' : 'p', text: body })
+  }
+  return blocks
+}
+
+/** 拉某个仓库的 release 列表（缓存半小时）。atom 不走 API，不会撞未认证限流。 */
+async function releaseFeed(kind) {
+  const url = RELEASE_FEEDS[kind]
+  if (!url) return []
+  const hit = feedCache.get(kind)
+  if (hit && Date.now() - hit.at < FEED_TTL_MS) return hit.entries
+  const res = await fetch(url, { headers: { 'user-agent': 'dsh-launcher' } })
+  if (!res.ok) throw new Error(`release feed ${res.status}`)
+  const xml = await res.text()
+  const entries = []
+  for (const item of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const body = item[1]
+    const title = decodeEntities((/<title>([\s\S]*?)<\/title>/.exec(body) || [])[1] || '').trim()
+    const href = (/<link[^>]*rel="alternate"[^>]*href="([^"]+)"/i.exec(body) || [])[1] || ''
+    const updated = (/<updated>([\s\S]*?)<\/updated>/.exec(body) || [])[1] || ''
+    const content = (/<content[^>]*>([\s\S]*?)<\/content>/.exec(body) || [])[1] || ''
+    // 版本号从标题和 tag 各取一次：dsh 是 v0.1.6-alpha.2 / dsh-v0.1.6-alpha.2，启动器是「DSH启动器 v0.1.5」
+    const version = (RELEASE_VERSION_RE.exec(title) || RELEASE_VERSION_RE.exec(href) || [])[0] || ''
+    if (!version) continue
+    entries.push({ version, title, url: href, updated, content })
+  }
+  feedCache.set(kind, { at: Date.now(), entries })
+  return entries
+}
+
+/**
+ * 某个版本的更新内容。dsh 的正文是中英双语，只留中文那段；
+ * 拿不到（版本比 feed 还老）就回 url 让调用方引导去看 release 页。
+ */
+async function releaseNotes(kind, version) {
+  const wanted = String(version || '').trim()
+  const fallbackUrl = RELEASE_FEEDS[kind] ? RELEASE_FEEDS[kind].replace(/\.atom$/, '') : ''
+  if (!RELEASE_FEEDS[kind] || !wanted) return { found: false, url: fallbackUrl }
+  let entries = []
+  try {
+    entries = await releaseFeed(kind)
+  } catch {
+    return { found: false, url: fallbackUrl }
+  }
+  const entry = entries.find((item) => item.version === wanted)
+  if (!entry) return { found: false, url: fallbackUrl }
+  const raw = decodeEntities(entry.content)
+  const englishAt = raw.search(/id="[^"]*en-v[^"]*"/i)
+  // 正文开头那行「中文 | English」是语言导航，不是变更内容
+  const blocks = parseNotes(englishAt > 0 ? raw.slice(0, englishAt) : raw)
+    .filter((block) => !/^(?:中文|English)(?:\s*\|\s*(?:中文|English))+$/i.test(block.text))
+  return {
+    found: true,
+    version: entry.version,
+    title: entry.title,
+    url: entry.url,
+    updated: entry.updated,
+    blocks,
+  }
 }
 
 async function installedPlugins() {
@@ -596,7 +805,9 @@ async function install(version) {
   pushLog(`安装 ${PKG}@${ver}`)
   try {
     await installSpec(dir, PKG, ver, (line, progress) => {
-      if (line) pushLog(line)
+      // 「已安装 N/N」「已解析 N」只是进度，进度条那边（progress 事件）已经在显示了；
+      // 再打进终端就是刷屏——装 700 多个包能刷出上百行。
+      if (line && !NOISY_LOG_RE.test(line)) pushLog(line)
       if (progress) {
         installProgress = progress
         emit('progress', progress)
@@ -807,27 +1018,45 @@ async function autoDisableFailedPlugins(error, already) {
   const settings = await loadSettings()
   if (settings.autoDisablePlugins === false) return false
   const failure = error?.failure || lastFailure
-  const rows = parseFailedRows(`${failure?.message || ''}\n${(failure?.tail || []).join('\n')}`)
-  for (const row of rows) {
-    if (already.has(row.id)) continue
-    if (/^@deepseek-ai\//.test(row.pkg)) continue
-    const owner = ownerOfRow(profileDir(), row.id)
-    if (owner && /^@deepseek-ai\//.test(owner)) continue
+  const text = `${failure?.message || ''}\n${(failure?.tail || []).join('\n')}`
+
+  // 禁掉一个加载行并记账；返回是否真的动手了（没改动就别重试，免得打转）
+  const tryDisable = async (id, name, note) => {
     try {
-      const result = disableRowId(profileDir(), row.id)
-      if (!result.changed) continue
-      pushLog(`[兼容] ${row.pkg} 的加载行「${row.id}」加载失败，已写入 cordis.patch.yml 禁用，重试启动…`)
-      already.add(row.id)
+      const result = disableRowId(profileDir(), id)
+      if (!result.changed) return false
+      pushLog(`[兼容] ${note}，已写入 cordis.patch.yml 禁用「${id}」，重试启动…`)
+      already.add(id)
+      // name 会原样显示在「启动时自动禁用了：…」里，note 只进日志
       lastAutoFix = {
         at: Date.now(),
         version: failure?.version || null,
-        plugins: [...(lastAutoFix?.plugins || []), { name: row.pkg, id: row.id }],
+        plugins: [...(lastAutoFix?.plugins || []), { name, id }],
       }
       await emitState()
       return true
     } catch (error2) {
-      pushLog(`[兼容] 自动禁用「${row.id}」失败：${error2 instanceof Error ? error2.message : error2}`)
+      pushLog(`[兼容] 自动禁用「${id}」失败：${error2 instanceof Error ? error2.message : error2}`)
+      return false
     }
+  }
+
+  // 一、报错直接点名了某个加载行
+  for (const row of parseFailedRows(text)) {
+    if (already.has(row.id)) continue
+    if (/^@deepseek-ai\//.test(row.pkg)) continue
+    const owner = ownerOfRow(profileDir(), row.id)
+    if (owner && /^@deepseek-ai\//.test(owner)) continue
+    if (await tryDisable(row.id, row.pkg, `${row.pkg} 的加载行「${row.id}」加载失败`)) return true
+  }
+
+  // 二、形状解析没命中时换个方向：顶层命中的可能是个核心 loader，出问题的插件藏在
+  //     cause 里（见 pluginsNamedInFailure 的说明）。拿已装插件的名字去报错里找，
+  //     按出现顺序一个个试，每次只禁一个再重试。
+  for (const plugin of pluginsNamedInFailure(profileDir(), text)) {
+    const id = plugin.ids.find((rowId) => !already.has(rowId))
+    if (!id) continue
+    if (await tryDisable(id, plugin.name, `报错点名了 ${plugin.name}`)) return true
   }
   return false
 }
@@ -989,6 +1218,26 @@ async function handleApi(req, res, url) {
     send(res, 200, await checkSelfUpdate())
     return
   }
+  if (req.method === 'GET' && url.pathname === '/api/pending') {
+    send(res, 200, { update: await pendingUpdate() })
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/tray') {
+    // 给 DSH.exe 的原生托盘读状态。纯文本 key=value，省得那边为了三行状态写 JSON 解析。
+    const snap = await snapshot()
+    const running = snap.running
+    send(res, 200, [
+      `status=${running?.status || 'stopped'}`,
+      `url=${running?.url || ''}`,
+      `installed=${snap.installed.length ? 1 : 0}`,
+    ].join('\n'), 'text/plain; charset=utf-8')
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/changelog') {
+    const kind = url.searchParams.get('kind') === 'self' ? 'self' : 'dsh'
+    send(res, 200, await releaseNotes(kind, url.searchParams.get('version')))
+    return
+  }
   if (req.method === 'GET' && url.pathname === '/api/settings') {
     send(res, 200, await publicSettings())
     return
@@ -1018,6 +1267,20 @@ async function handleApi(req, res, url) {
   }
 
   const body = req.method === 'POST' ? await readJson(req) : {}
+  if (req.method === 'POST' && url.pathname === '/api/pending/skip') {
+    send(res, 200, await skipPendingUpdate(body))
+    return
+  }
+  if (req.method === 'POST' && url.pathname === '/api/restart') {
+    send(res, 200, await restartInstalled())
+    return
+  }
+  if (req.method === 'POST' && url.pathname === '/api/quit') {
+    // 托盘的「退出」走这里：先把响应发出去，再收尾退出，否则调用方只会看到连接被掐断
+    send(res, 200, { ok: true })
+    shutdown().finally(() => process.exit(0))
+    return
+  }
   if (req.method === 'POST' && url.pathname === '/api/install') {
     await install(body.version)
     send(res, 200, { ok: true })

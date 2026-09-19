@@ -13,3 +13,9 @@ winresource = "0.1"
 [profile.release]
 lto = true
 strip = true
+
+[dependencies]
+image = { version = "0.25.10", default-features = false, features = ["ico", "png"] }
+tao = "0.37.0"
+tray-icon = "0.25.1"
+wry = "0.57.0"

@@ -1,25 +1,19 @@
 import { execFile } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import SysTrayModule from 'systray2'
 import {
-  launchInstalled,
-  onState,
-  restartInstalled,
+  pendingUpdate,
   setHost,
-  snapshot,
+  shutdown,
   startServer,
-  stop,
-  stopAll,
 } from './server.js'
 
-const SysTray = SysTrayModule.default ?? SysTrayModule
 const ROOT = dirname(fileURLToPath(import.meta.url))
-const ICON = existsSync(join(ROOT, 'assets', 'tray.ico'))
-  ? join(ROOT, 'assets', 'tray.ico')
-  : join(ROOT, 'assets', 'icon.ico')
 const MANAGER_URL = 'http://127.0.0.1:3780/'
+// 由 DSH.exe 拉起时它设这个变量：管理页装进它自己的窗口，托盘也归它，
+// 这里就只剩服务本身，不用再往系统浏览器里开页面。
+const APP_WINDOW = process.env.DSH_APP_WINDOW === '1'
 const LOG_DIR = process.env.APPDATA ? join(process.env.APPDATA, 'DSH') : join(ROOT, 'data')
 const LOG = join(LOG_DIR, 'manager.log')
 
@@ -40,13 +34,20 @@ function openPage(target = MANAGER_URL) {
   execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [target])
 }
 
-function iconBase64() {
-  if (!existsSync(ICON)) return ''
-  return readFileSync(ICON).toString('base64')
+/**
+ * 让 DSH.exe 把窗口叫到前面。父子之间没有别的 IPC，就约定 stdout 里一行标记：
+ * 父进程接着这个管道，看到这行就把窗口显示出来。
+ */
+function requestShow() {
+  if (!APP_WINDOW) return false
+  process.stdout.write('__DSH_SHOW__\n')
+  return true
 }
 
-function runningOf(snap) {
-  return snap?.running && snap.running.version ? snap.running : null
+/** 叫回管理页：有 app 窗口就让它显示，没有就照旧开浏览器标签页。 */
+async function showManager() {
+  if (requestShow()) return
+  openPage(MANAGER_URL)
 }
 
 async function wakeExisting() {
@@ -58,189 +59,52 @@ async function wakeExisting() {
       signal: AbortSignal.timeout(10_000),
     })
     if (res.ok) return true
-    log(`唤醒托盘失败 HTTP ${res.status}`)
+    log(`唤醒已有实例失败 HTTP ${res.status}`)
   } catch (error) {
-    log('唤醒托盘失败', error)
+    log('唤醒已有实例失败', error)
   }
   return false
 }
 
 async function main() {
-  log('启动管理器', ROOT, ICON)
-  let url
+  log('启动管理器', ROOT)
   try {
-    url = await startServer()
+    await startServer()
   } catch (error) {
     if (error && error.code === 'EADDRINUSE') {
-      log('端口 3780 已被占用，通知已在运行的实例重建托盘')
+      log('端口 3780 已被占用，通知已在运行的实例把窗口叫出来')
       await wakeExisting()
-      openPage(MANAGER_URL)
-      try {
-        const res = await fetch(`${MANAGER_URL}api/state`, { cache: 'no-store', signal: AbortSignal.timeout(3000) })
-        const data = await res.json()
-        if (data.running?.url) openPage(data.running.url)
-      } catch { /* manager page is enough */ }
+      await showManager()
+      if (!APP_WINDOW) {
+        try {
+          const res = await fetch(`${MANAGER_URL}api/state`, { cache: 'no-store', signal: AbortSignal.timeout(3000) })
+          const data = await res.json()
+          if (data.running?.url) openPage(data.running.url)
+        } catch { /* 管理页开了就够 */ }
+      }
       return
     }
     throw error
   }
 
-  openPage(MANAGER_URL)
-  launchInstalled().then((result) => {
-    if (result.url) openPage(result.url)
-  }).catch((error) => {
-    log(error)
-  })
+  // 托盘和窗口都在 DSH.exe 那边，本进程只剩服务，靠 http server 活着。
+  // onWake 要尽早挂上：另一个实例双击启动时会立刻打 /api/wake，晚一步就丢了这个请求。
+  setHost({ onWake: () => showManager() })
 
-  const itemOpenDsh = {
-    title: '打开 DSH',
-    tooltip: '',
-    enabled: false,
-    click: () => {
-      const href = itemOpenDsh.tooltip
-      if (href && href.startsWith('http')) openPage(href)
-    },
+  // 打开启动器只把界面摆出来，不再默认拉起 dsh——跑哪个版本、什么时候跑，由用户在界面上点。
+  // 有待更新还是问一下：这时候用户往往就是来点启动的，顺手让他决定要不要先更新。
+  const pending = await pendingUpdate()
+  if (pending) {
+    log('检测到更新，等用户确认', JSON.stringify(pending))
+    if (!APP_WINDOW) openPage(`${MANAGER_URL}?ask=update`)
+  } else if (!APP_WINDOW) {
+    openPage(MANAGER_URL)
   }
-  const itemToggle = {
-    title: '启动',
-    tooltip: '启动 DSH',
-    enabled: false,
-    click: async () => {
-      try {
-        const snap = await snapshot()
-        const running = runningOf(snap)
-        if (running && (running.status === 'running' || running.status === 'starting')) {
-          await stop(running.version)
-          return
-        }
-        const result = await launchInstalled()
-        if (result.url) openPage(result.url)
-      } catch (error) {
-        console.error(error)
-      }
-    },
-  }
-  const itemRestart = {
-    title: '重启',
-    tooltip: '重启 DSH',
-    enabled: false,
-    click: async () => {
-      try {
-        const result = await restartInstalled()
-        if (result?.url) openPage(result.url)
-      } catch (error) {
-        console.error(error)
-      }
-    },
-  }
-  const itemManager = {
-    title: '打开管理页',
-    tooltip: url,
-    enabled: true,
-    click: () => openPage(MANAGER_URL),
-  }
-  const itemQuit = {
-    title: '退出',
-    tooltip: '',
-    enabled: true,
-    click: () => void quit(),
-  }
-
-  const menu = {
-    icon: iconBase64(),
-    title: 'DSH',
-    tooltip: 'DSH',
-    items: [
-      itemOpenDsh,
-      itemToggle,
-      itemRestart,
-      SysTray.separator,
-      itemManager,
-      itemQuit,
-    ],
-  }
-
-  let tray = null
-  let trayGen = 0
-  let quitting = false
-
-  function trayAlive() {
-    const child = tray?.process
-    return Boolean(child && child.exitCode == null && !child.killed)
-  }
-
-  function applyTray(snap) {
-    if (!trayAlive()) return
-    const running = runningOf(snap)
-    const status = running?.status
-    const live = status === 'running' || status === 'starting'
-    const installed = Array.isArray(snap.installed) && snap.installed.length > 0
-    const href = status === 'running' && running.url ? running.url : ''
-
-    itemOpenDsh.enabled = Boolean(href)
-    itemOpenDsh.tooltip = href
-    itemToggle.title = live ? '停止' : '启动'
-    itemToggle.tooltip = live ? '停止 DSH' : installed ? '启动 DSH' : '尚未安装'
-    itemToggle.enabled = installed && status !== 'stopping'
-    itemRestart.enabled = status === 'running'
-    void tray.sendAction({ type: 'update-item', item: itemOpenDsh })
-    void tray.sendAction({ type: 'update-item', item: itemToggle })
-    void tray.sendAction({ type: 'update-item', item: itemRestart })
-  }
-
-  async function ensureTray() {
-    if (quitting || trayAlive()) return
-    const gen = ++trayGen
-    log('启动托盘')
-    const next = new SysTray({
-      menu,
-      debug: false,
-      copyDir: false,
-    })
-    tray = next
-    next.onClick((action) => {
-      if (typeof action.item?.click === 'function') action.item.click()
-    })
-    try {
-      await Promise.race([
-        next.ready(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('托盘启动超时')), 8000)),
-      ])
-      if (next.process) {
-        next.onExit(() => {
-          if (quitting || gen !== trayGen) return
-          log('托盘进程已退出，将重新创建')
-          if (tray === next) tray = null
-          setTimeout(() => { void ensureTray() }, 800)
-        })
-      }
-    } catch (error) {
-      log(error)
-      if (gen === trayGen && !quitting && !trayAlive()) {
-        setTimeout(() => { void ensureTray() }, 1500)
-      }
-    }
-    if (gen === trayGen && !quitting) applyTray(await snapshot())
-  }
-
-  const quit = async () => {
-    if (quitting) return
-    quitting = true
-    log('正在退出')
-    await Promise.race([
-      stopAll(),
-      new Promise((resolve) => setTimeout(resolve, 2000)),
-    ])
-    try { tray?.kill(false) } catch { /* already gone */ }
-    process.exit(0)
-  }
-
-  setHost({ onWake: () => ensureTray() })
-  onState(applyTray)
-  await ensureTray()
 
   for (const signal of ['SIGINT', 'SIGTERM']) {
-    process.on(signal, () => void quit())
+    process.on(signal, () => {
+      shutdown().finally(() => process.exit(0))
+    })
   }
 }
 

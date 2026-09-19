@@ -18,6 +18,8 @@ export const DEFAULTS = {
   seedMarket: true,
   // 启动失败时按错误点名自动禁用问题插件（兼容模式），再重试
   autoDisablePlugins: true,
+  // 用户在更新弹窗里点过「不更新」的版本 { dsh?, self? }：同一个版本不再提示
+  skippedUpdate: {},
 }
 
 function hasInstall(dir) {
@@ -60,6 +62,16 @@ export async function loadSettings() {
   }
 }
 
+/** 跳过记录只留非空版本号，别让历史文件里的脏值影响更新提示。 */
+function normalizeSkippedUpdate(value) {
+  const out = {}
+  for (const key of ['dsh', 'self']) {
+    const version = value && typeof value === 'object' ? value[key] : ''
+    if (typeof version === 'string' && version.trim()) out[key] = version.trim()
+  }
+  return out
+}
+
 export async function saveSettings(patch) {
   const current = await loadSettings()
   const merged = { ...current, ...patch }
@@ -67,6 +79,7 @@ export async function saveSettings(patch) {
   merged.autoStart = Boolean(merged.autoStart)
   merged.seedMarket = merged.seedMarket !== false
   merged.autoDisablePlugins = merged.autoDisablePlugins !== false
+  merged.skippedUpdate = normalizeSkippedUpdate(merged.skippedUpdate)
   // 已废弃的 AI 修复配置：清掉历史文件里的残留字段
   for (const key of ['aiRepair', 'aiModel', 'aiBaseURL', 'aiApiKey', 'aiMaxRounds', 'aiAllowDestructive']) {
     delete merged[key]

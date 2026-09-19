@@ -21,6 +21,10 @@ const INNO_SETUP = join(VENDOR, 'innosetup.exe')
 const ISCC = join(INNO_DIR, 'ISCC.exe')
 const SETUP_ISS = join(ROOT, 'scripts', 'dsh-setup.iss')
 const SETUP_NAME = 'DSH-Setup'
+// Windows 按路径缓存快捷方式图标：同名文件覆盖后，Explorer 仍会显示缓存里的旧位图，
+// 升级用户会以为图标没更新。图标文件名带上版本号，路径一变缓存就失效，不用指望用户
+// 去清图标缓存。
+const ICON_NAME = `dsh-${PKG.version}.ico`
 const DESKTOP = join(process.env.USERPROFILE || ROOT, 'Desktop')
 
 function run(command, args, cwd = ROOT) {
@@ -122,7 +126,6 @@ async function assemble() {
   rmSync(OUT, { recursive: true, force: true })
   await mkdir(join(OUT, 'public'), { recursive: true })
   await mkdir(join(OUT, 'assets'), { recursive: true })
-  await mkdir(join(OUT, 'traybin'), { recursive: true })
   for (const file of [
     'start.js',
     'server.js',
@@ -137,14 +140,12 @@ async function assemble() {
   }
   await cp(join(ROOT, 'public'), join(OUT, 'public'), { recursive: true })
   await cp(join(ROOT, 'assets'), join(OUT, 'assets'), { recursive: true })
+  await copyFile(join(ROOT, 'assets', 'dsh.ico'), join(OUT, 'assets', ICON_NAME))
   await cp(join(ROOT, 'perf'), join(OUT, 'perf'), { recursive: true })
   await cp(join(ROOT, 'compat'), join(OUT, 'compat'), { recursive: true })
   await copyNodeRuntime()
-  await cp(join(ROOT, 'node_modules'), join(OUT, 'node_modules'), { recursive: true })
-  await copyFile(
-    join(ROOT, 'node_modules', 'systray2', 'traybin', 'tray_windows_release.exe'),
-    join(OUT, 'traybin', 'tray_windows_release.exe'),
-  )
+  // 这里原本要拷 node_modules（装着 systray2）。托盘搬进 DSH.exe 之后启动器不再依赖任何
+  // npm 包，只剩 node 内置模块和同目录的自己人，整份拷贝都省了。
   await copyFile(join(ROOT, 'launcher', 'target', 'release', 'DSH.exe'), join(OUT, 'DSH.exe'))
   console.log(`已打包到 ${OUT}`)
 }
@@ -189,6 +190,7 @@ async function buildInstaller() {
   run(iscc, [
     SETUP_ISS,
     `/DMyAppVersion=${PKG.version}`,
+    `/DMyAppIcon=${ICON_NAME}`,
     `/O${join(ROOT, 'release')}`,
     `/F${SETUP_NAME}`,
   ])

@@ -27,19 +27,69 @@
       display: grid;
       grid-template-rows: auto 1fr;
     }
-    /* 背景虚影：右下角一张很大的淡图标，白底乘上去等于没画，只留下头发那点蓝 */
+    /* 高清角色独立成层，仅动画 transform / opacity，保留文字区域的对比度。 */
     .backdrop {
       position: fixed;
-      left: -6vh;
-      bottom: -8vh;
-      width: min(68vh, 56vw);
-      height: min(68vh, 56vw);
-      background: url("/icon.png") center / contain no-repeat;
-      opacity: 0.14;
-      mix-blend-mode: multiply;
-      filter: blur(2.5px) saturate(0.9);
+      inset: 0;
+      overflow: hidden;
       pointer-events: none;
       z-index: 0;
+    }
+    .backdrop-character {
+      position: absolute;
+      left: -3vh;
+      bottom: -7vh;
+      width: min(76vh, 62vw);
+      aspect-ratio: 1;
+      background: url("/background-character.png") center / contain no-repeat;
+      opacity: 0.46;
+      transform-origin: 35% 85%;
+      animation: character-float 9s ease-in-out infinite;
+    }
+    .backdrop::before, .backdrop::after {
+      content: "";
+      position: absolute;
+      border-radius: 50%;
+    }
+    .backdrop::before {
+      width: 65vmax;
+      height: 65vmax;
+      right: -25vmax;
+      top: -30vmax;
+      background: radial-gradient(circle, #d5e3ff 0%, transparent 68%);
+      animation: ambient-drift 18s ease-in-out infinite alternate;
+    }
+    .backdrop::after {
+      left: 7%;
+      bottom: 12%;
+      width: 4px;
+      height: 4px;
+      background: #8fafe9;
+      box-shadow: 9vw -23vh 0 1px #b3c9f1, 22vw -9vh 0 #96b6ed,
+        4vw -40vh 0 #afc6ef, 70vw -15vh 0 1px #b9cef4,
+        80vw -48vh 0 #b3c9f1;
+      animation: mote-float 12s ease-in-out infinite;
+    }
+    @keyframes character-float {
+      0%, 100% { transform: translateY(0) rotate(-0.5deg); }
+      50% { transform: translateY(-14px) rotate(0.5deg); }
+    }
+    @keyframes ambient-drift {
+      from { transform: translate(0, 0); opacity: 0.55; }
+      to { transform: translate(-5vw, 6vh); opacity: 0.9; }
+    }
+    @keyframes mote-float {
+      0%, 100% { transform: translateY(0); opacity: 0.25; }
+      50% { transform: translateY(-20px); opacity: 0.7; }
+    }
+    html.background-paused .backdrop-character,
+    html.background-paused .backdrop::before,
+    html.background-paused .backdrop::after { animation-play-state: paused; }
+    @media (prefers-reduced-motion: reduce) {
+      .backdrop-character, .backdrop::before, .backdrop::after { animation: none; }
+    }
+    @media (max-width: 600px) {
+      .backdrop-character { width: 78vw; opacity: 0.3; }
     }
     header, main { position: relative; z-index: 1; }
     header {
@@ -48,7 +98,7 @@
       justify-content: space-between;
       padding: 18px 28px;
     }
-    .brand { font-weight: 650; letter-spacing: 0.04em; font-size: 16px; color: var(--accent); }
+    .brand { font-weight: 700; letter-spacing: 0.04em; font-size: 20px; line-height: 1; color: var(--accent); }
     .brand-block { display: flex; align-items: baseline; gap: 10px; }
     .app-ver { color: var(--muted); font-size: 12px; }
     .app-ver:empty { display: none; }
@@ -63,16 +113,103 @@
     }
     .self-update:hover { filter: brightness(0.94); }
     .self-update[hidden] { display: none; }
-    nav { display: flex; gap: 4px; background: var(--accent-soft); padding: 4px; border-radius: 999px; border: 1px solid var(--line); }
+    nav {
+      --tab-x: 4px;
+      --tab-width: 72px;
+      position: relative;
+      display: flex;
+      gap: 4px;
+      background: var(--accent-soft);
+      padding: 4px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      isolation: isolate;
+    }
+    nav::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      left: 0;
+      top: 4px;
+      width: var(--tab-width);
+      height: calc(100% - 8px);
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 3px 10px rgba(59, 111, 224, 0.22);
+      transform: translateX(var(--tab-x));
+      transition: transform 360ms cubic-bezier(.22, 1, .36, 1),
+        width 360ms cubic-bezier(.22, 1, .36, 1);
+    }
     nav button {
       border: 0; background: transparent; color: var(--muted);
       padding: 6px 14px; border-radius: 999px; cursor: pointer; font: inherit;
+      transition: color 180ms ease, transform 180ms ease;
     }
-    nav button:hover { color: var(--accent); }
-    nav button.active { background: var(--accent); color: #fff; }
-    main { min-height: 0; }
+    nav button:hover { color: var(--accent); transform: translateY(-1px); }
+    nav button.active { color: #fff; }
+    .header-right { display: flex; align-items: stretch; gap: 12px; }
+    /* 右上角 Star：和 nav 一样是胶囊，靠 stretch 撑成和 nav 等高 */
+    .star-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 0 16px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1;
+      text-decoration: none;
+      transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+    }
+    .star-link svg { width: 14px; height: 14px; }
+    .star-link:hover {
+      transform: translateY(-1px);
+      border-color: #b9ccf0;
+      box-shadow: 0 3px 10px rgba(59, 111, 224, 0.18);
+    }
+    /* app 窗口模式：原生标题栏被去掉了，这排按钮顶上；浏览器里不显示 */
+    .win-controls { display: none; align-items: center; gap: 2px; margin-left: 2px; }
+    .app-window .win-controls { display: flex; }
+    .win-btn {
+      width: 34px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: background 140ms ease, color 140ms ease;
+    }
+    .win-btn svg { width: 10px; height: 10px; }
+    .win-btn:hover { background: var(--accent-soft); color: var(--accent); }
+    .win-btn.close:hover { background: var(--danger); color: #fff; }
+    /* 顶栏要用来拖窗口，文字别被拖选 */
+    .app-window header { user-select: none; }
+    main { min-height: 0; overflow: hidden; }
     .page { display: none; height: 100%; }
     .page.active { display: flex; }
+    .page.tab-enter-forward { animation: tab-enter-forward 320ms cubic-bezier(.22, 1, .36, 1) both; }
+    .page.tab-enter-backward { animation: tab-enter-backward 320ms cubic-bezier(.22, 1, .36, 1) both; }
+    @keyframes tab-enter-forward {
+      from { opacity: 0; transform: translateX(18px) scale(.992); }
+      to { opacity: 1; transform: none; }
+    }
+    @keyframes tab-enter-backward {
+      from { opacity: 0; transform: translateX(-18px) scale(.992); }
+      to { opacity: 1; transform: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      nav::before, nav button { transition: none; }
+      .page.tab-enter-forward, .page.tab-enter-backward { animation: none; }
+    }
     #page-home, #page-plugins, #page-settings { align-items: center; justify-content: center; padding: 24px; }
     .card {
       width: min(640px, 100%);
@@ -253,6 +390,7 @@
     .toggle input:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
     .hint { color: var(--muted); font-size: 13px; margin: 12px 0 0; min-height: 1.5em; }
     .hint a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+    .card.settings .hint:empty { display: none; }
     .progress {
       margin-top: 12px;
       height: 4px;
@@ -440,22 +578,142 @@
       background: #a3bcea;
       background-clip: content-box;
     }
+    /* 开机自启时若检测到新版本：先问用户，答案出来之前不启动 dsh */
+    .ask {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(22, 35, 61, 0.36);
+    }
+    .ask[hidden] { display: none; }
+    .ask-card {
+      width: min(520px, 100%);
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 18px 48px rgba(22, 35, 61, 0.24);
+      padding: 24px 26px 20px;
+    }
+    .ask-title { margin: 0 0 10px; font-size: 17px; font-weight: 650; }
+    .ask-items { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #c3d3ee transparent; }
+    .ask-item { padding: 13px 0; border-top: 1px solid var(--line); }
+    .ask-item .ask-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .ask-item .ask-name { font-size: 14px; font-weight: 600; }
+    .ask-item .ask-ver { color: var(--muted); font-size: 12.5px; letter-spacing: 0; }
+    .ask-item .ask-ver b { color: var(--accent); font-weight: 650; }
+    .ask-notes {
+      margin: 11px 0 2px;
+      padding: 11px 13px;
+      max-height: 210px;
+      overflow-y: auto;
+      background: var(--accent-soft);
+      border-radius: 10px;
+      scrollbar-width: thin;
+      scrollbar-color: #c3d3ee transparent;
+    }
+    .ask-notes .note-h { margin: 11px 0 6px; font-size: 13px; font-weight: 650; }
+    .ask-notes .note-h:first-child { margin-top: 0; }
+    .ask-notes .note-p { margin: 0 0 8px; font-size: 13px; }
+    .ask-notes .note-li { position: relative; margin: 0 0 6px; padding-left: 14px; font-size: 13px; }
+    .ask-notes .note-li::before { content: "•"; position: absolute; left: 2px; color: var(--accent); }
+    .ask-notes .note-li:last-child, .ask-notes .note-p:last-child { margin-bottom: 0; }
+    .ask-notes .note-empty { margin: 0; color: var(--muted); font-size: 13px; }
+    .ask-notes a { color: var(--accent); font-size: 12.5px; }
+    .ask-notes .note-more { display: inline-block; margin-top: 8px; }
+    /* 更新与暂不更新并排：首页的 .primary 是通栏主按钮，这里要按内容收窄 */
+    .ask-actions {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+      flex: 0 0 auto;
+    }
+    .ask-actions .primary,
+    .ask-actions .ghost {
+      width: auto;
+      flex: 0 0 auto;
+      font-size: 13px;
+      padding: 9px 15px;
+      border-radius: 10px;
+    }
+    .ask-note { margin: 12px 0 0; color: var(--muted); font-size: 12.5px; }
+    .ask-note[hidden] { display: none; }
+    /* 页面内提示：原生 alert 在 app 窗口里是系统弹窗，风格割裂 */
+    #notice { z-index: 40; }
+    .notice-text {
+      margin: 0;
+      max-height: 40vh;
+      overflow-y: auto;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.6;
+      overflow-wrap: anywhere;
+      scrollbar-width: thin;
+      scrollbar-color: #c3d3ee transparent;
+    }
+    /* 托盘退出后：浏览器不一定会让脚本关标签页，那就换一张干净的告别页 */
+    .gone {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: var(--bg);
+      text-align: center;
+    }
+    .gone[hidden] { display: none; }
+    .gone-title { margin: 0 0 8px; font-size: 17px; font-weight: 650; }
+    .gone-sub { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
   </style>
+  <link rel="stylesheet" href="/mascot.css" />
 </head>
 <body>
-  <div class="backdrop" aria-hidden="true"></div>
+  <div class="backdrop" aria-hidden="true">
+    <canvas class="water-surface" aria-hidden="true"></canvas>
+    <div class="backdrop-character"></div>
+  </div>
   <header>
     <div class="brand-block">
       <div class="brand">DSH-X</div>
       <span class="app-ver" id="appVer">__APP_VERSION__</span>
       <button type="button" class="self-update" id="selfUpdate" hidden>更新</button>
     </div>
-    <nav>
-      <button class="active" data-tab="home">控制</button>
-      <button data-tab="plugins">插件</button>
-      <button data-tab="log">终端</button>
-      <button data-tab="settings">设置</button>
-    </nav>
+    <div class="header-right">
+      <a class="star-link" href="https://github.com/yyh-001/DSH-X" target="_blank" rel="noreferrer"
+         title="在 GitHub 上给 DSH-X 点个 Star">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.7l1.93 3.91 4.32.63-3.12 3.04.73 4.3L8 11.55l-3.86 2.03.73-4.3L1.75 6.24l4.32-.63z"/></svg>
+        <span>Star</span>
+      </a>
+      <nav>
+        <button class="active" data-tab="home">控制</button>
+        <button data-tab="plugins">插件</button>
+        <button data-tab="log">终端</button>
+        <button data-tab="settings">设置</button>
+      </nav>
+      <!-- app 窗口模式才显示：原生标题栏被去掉了，最小化/最大化/关闭由页面接管 -->
+      <div class="win-controls">
+        <button type="button" class="win-btn" id="winMin" title="最小化" aria-label="最小化">
+          <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10" stroke="currentColor" stroke-width="1.1" fill="none"/></svg>
+        </button>
+        <button type="button" class="win-btn" id="winMax" title="最大化" aria-label="最大化">
+          <svg viewBox="0 0 10 10" aria-hidden="true"><rect x=".7" y=".7" width="8.6" height="8.6" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+        </button>
+        <button type="button" class="win-btn close" id="winClose" title="关闭" aria-label="关闭">
+          <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M.7.7l8.6 8.6M9.3.7L.7 9.3" stroke="currentColor" stroke-width="1.1" fill="none"/></svg>
+        </button>
+      </div>
+    </div>
   </header>
   <main>
     <div id="page-home" class="page active">
@@ -475,14 +733,14 @@
             <button class="icon-btn" id="update" type="button" hidden aria-label="更新" title="更新">
               <span class="spin" aria-hidden="true"></span>
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path fill="currentColor" d="M12.75 16.5a.75.75 0 0 1-1.5 0V8.81L8.53 11.53a.75.75 0 1 1-1.06-1.06l4-4a.75.75 0 0 1 1.06 0l4 4a.75.75 0 1 1-1.06 1.06L12.75 8.81V16.5Z"/>
-                <path fill="currentColor" d="M5.5 18.25h13a.75.75 0 0 1 0 1.5h-13a.75.75 0 0 1 0-1.5Z"/>
+                <path fill="currentColor" d="M12.75 16a.75.75 0 0 1-1.5 0V8.56l-2.72 2.72a.75.75 0 1 1-1.06-1.06l4-4a.75.75 0 0 1 1.06 0l4 4a.75.75 0 1 1-1.06 1.06l-2.72-2.72V16Z"/>
+                <rect fill="currentColor" x="5" y="18.25" width="14" height="1.5" rx=".75"/>
               </svg>
             </button>
             <button class="icon-btn" id="restart" type="button" hidden aria-label="重启" title="重启">
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 12a8 8 0 1 1-2.3-5.6"/>
-                <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 4.5V10h-5.5"/>
+                <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M18 12a6 6 0 1 1-1.76-4.24"/>
+                <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M18 6.5v4h-4"/>
               </svg>
             </button>
             <button class="icon-btn" id="remove" type="button" hidden aria-label="卸载" title="卸载">
@@ -495,10 +753,10 @@
             <button class="icon-btn play" id="main" type="button" aria-label="启动" title="启动">
               <span class="spin" aria-hidden="true"></span>
               <svg class="ico ico-play" viewBox="0 0 24 24" aria-hidden="true">
-                <path fill="currentColor" d="M8.2 5.4v13.2c0 .7.8 1.1 1.4.7l10.2-6.6c.6-.4.6-1.2 0-1.6L9.6 4.7c-.6-.4-1.4 0-1.4.7Z"/>
+                <path fill="currentColor" d="M7 5.9v12.2c0 .74.81 1.2 1.45.82l9.9-6.1a.96.96 0 0 0 0-1.64l-9.9-6.1A.96.96 0 0 0 7 5.9Z"/>
               </svg>
               <svg class="ico ico-stop" viewBox="0 0 24 24" aria-hidden="true">
-                <rect fill="currentColor" x="6.5" y="6.5" width="11" height="11" rx="2.2"/>
+                <rect fill="currentColor" x="5" y="5" width="14" height="14" rx="2.6"/>
               </svg>
             </button>
           </div>
@@ -529,13 +787,39 @@
     <div id="page-settings" class="page">
       <div class="card settings">
         <label class="toggle"><span>开机自启</span><input id="autoStart" type="checkbox" /></label>
-        <label class="toggle"><span>自动安装插件市场</span><input id="seedMarket" type="checkbox" /></label>
-        <label class="toggle"><span>启动失败自动禁用问题插件（兼容模式）</span><input id="autoDisable" type="checkbox" /></label>
+        <label class="toggle"><span>插件市场</span><input id="seedMarket" type="checkbox" /></label>
+        <label class="toggle"><span>兼容模式</span><input id="autoDisable" type="checkbox" /></label>
         <button class="primary" id="saveSettings" type="button" style="margin-top: 22px">保存</button>
         <p class="hint" id="settingsHint"></p>
       </div>
     </div>
   </main>
+  <div class="ask" id="ask" hidden>
+    <div class="ask-card" role="dialog" aria-modal="true" aria-labelledby="askTitle">
+      <h2 class="ask-title" id="askTitle">检测到新版本</h2>
+      <div class="ask-items" id="askItems"></div>
+      <p class="ask-note" id="askNote" hidden></p>
+      <div class="ask-actions" id="askActions">
+        <button type="button" class="ghost" id="askSkip">暂不更新，直接启动</button>
+      </div>
+    </div>
+  </div>
+  <div class="ask" id="notice" hidden>
+    <div class="ask-card" role="alertdialog" aria-modal="true" aria-labelledby="noticeTitle">
+      <h2 class="ask-title" id="noticeTitle">操作失败</h2>
+      <p class="notice-text" id="noticeText"></p>
+      <div class="ask-actions">
+        <button type="button" class="primary" id="noticeOk">确定</button>
+      </div>
+    </div>
+  </div>
+  <div class="gone" id="gone" hidden>
+    <div>
+      <div class="gone-title">DSH-X 已退出</div>
+      <p class="gone-sub">管理器已停止运行，这个页面可以关掉了。</p>
+      <button type="button" class="ghost" id="goneClose">关闭页面</button>
+    </div>
+  </div>
   <script>
     // ---- 版本下拉（自绘，替代原生 select）----
     const versionRootEl = document.getElementById('versionPicker')
@@ -692,11 +976,49 @@
     let barMaxPct = 0
     // 下拉默认只列已装 + 最新 + 最近几个版本，其余折起来（原生下拉太长会顶出屏幕）
     const RECENT_REMOTE_LIMIT = 5
-    const EXPERIMENTAL = /-(?:alpha|beta)\b/i
     let showAllVersions = false
-    const fromLauncher = new URLSearchParams(location.search).has('launch')
+    const launchQuery = new URLSearchParams(location.search)
+    const fromLauncher = launchQuery.has('launch') || launchQuery.has('ask')
+    // 检测到更新时启动器会带 ?ask 打开本页：用户没表态之前不许自动启动
+    let askBlocking = launchQuery.has('ask')
+    // DSH.exe 的窗口去掉了原生标题栏，窗口按钮和拖动都由页面接管
+    const inAppWindow = launchQuery.has('window')
+    if (inAppWindow) document.documentElement.classList.add('app-window')
+    // 清掉查询串时得留住 window=1，否则一刷新就退回浏览器模式的排版
+    const homePath = inAppWindow ? '/?window=1' : '/'
     let launchFollowed = false
     let launchRequested = false
+
+    // 原生 alert 在 app 窗口里是系统弹窗，和界面风格割裂，统一换成页面内的提示
+    const noticeEl = document.getElementById('notice')
+    const noticeTitleEl = document.getElementById('noticeTitle')
+    const noticeTextEl = document.getElementById('noticeText')
+    function notify(message, title = '操作失败') {
+      noticeTitleEl.textContent = title
+      noticeTextEl.textContent = message == null ? '' : String(message)
+      noticeEl.hidden = false
+    }
+    document.getElementById('noticeOk').onclick = () => { noticeEl.hidden = true }
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !noticeEl.hidden) noticeEl.hidden = true
+    })
+
+    // app 窗口模式：最小化/最大化/关闭和拖动标题栏都由页面自己接。ipc 是 wry 注入的桥，
+    // 浏览器里没有这个对象，所以只在这一模式下用。
+    if (inAppWindow && window.ipc) {
+      const ipc = window.ipc
+      document.getElementById('winMin').onclick = () => ipc.postMessage('minimize')
+      document.getElementById('winMax').onclick = () => ipc.postMessage('maximize')
+      document.getElementById('winClose').onclick = () => ipc.postMessage('close')
+      // 标题栏空白处：拖窗口，双击切换最大化（和系统标题栏一致）。落在控件上都不做，
+      // 否则按钮点不动。用 mousedown 的 detail（连击次数）而不是 dblclick——第一次
+      // 按下已经进了系统的拖动循环，第二次的 dblclick 未必还能送达页面。
+      document.querySelector('header').addEventListener('mousedown', (event) => {
+        if (event.button !== 0) return
+        if (event.target.closest('button, a, input, select, .select')) return
+        ipc.postMessage(event.detail >= 2 ? 'maximize' : 'drag')
+      })
+    }
 
     const post = (path, body = {}) => fetch(path, {
       method: 'POST',
@@ -708,14 +1030,35 @@
       return data
     })
 
-    document.querySelectorAll('nav [data-tab]').forEach((button) => {
+    const tabNav = document.querySelector('nav')
+    const tabButtons = [...document.querySelectorAll('nav [data-tab]')]
+    const tabPages = [...document.querySelectorAll('.page')]
+    const positionTabIndicator = (button) => {
+      tabNav.style.setProperty('--tab-x', `${button.offsetLeft}px`)
+      tabNav.style.setProperty('--tab-width', `${button.offsetWidth}px`)
+    }
+    const activeTabButton = () => tabButtons.find((button) => button.classList.contains('active'))
+    tabButtons.forEach((button, nextIndex) => {
       button.onclick = () => {
-        document.querySelectorAll('nav [data-tab]').forEach((item) => item.classList.toggle('active', item === button))
-        document.querySelectorAll('.page').forEach((page) => page.classList.toggle('active', page.id === `page-${button.dataset.tab}`))
+        const current = activeTabButton()
+        const currentIndex = Math.max(0, tabButtons.indexOf(current))
+        const nextPage = document.getElementById(`page-${button.dataset.tab}`)
+        if (current === button) return
+        tabButtons.forEach((item) => item.classList.toggle('active', item === button))
+        tabPages.forEach((page) => {
+          page.classList.remove('active', 'tab-enter-forward', 'tab-enter-backward')
+        })
+        nextPage.classList.add('active', nextIndex > currentIndex ? 'tab-enter-forward' : 'tab-enter-backward')
+        nextPage.addEventListener('animationend', () => {
+          nextPage.classList.remove('tab-enter-forward', 'tab-enter-backward')
+        }, { once: true })
+        positionTabIndicator(button)
         if (button.dataset.tab === 'settings') loadSettings()
         if (button.dataset.tab === 'plugins') loadPlugins()
       }
     })
+    requestAnimationFrame(() => positionTabIndicator(activeTabButton()))
+    new ResizeObserver(() => positionTabIndicator(activeTabButton())).observe(tabNav)
 
     function versionNames(list) {
       if (!Array.isArray(list)) return []
@@ -801,20 +1144,20 @@
       return [...extra, ...remoteVersions]
     }
 
-    /** 折叠后的可见版本：已装、最新、当前选中永远保留，其余远程版本只留最近几个。 */
+    /** 折叠后的可见版本：只列最近 RECENT_REMOTE_LIMIT 个，其余进「更多版本」。 */
     function visibleVersionList(all) {
       if (showAllVersions) return all
       const keep = new Set(installedList())
       const latest = latestRemoteVersion()
       if (latest) keep.add(latest)
       if (userPicked && picked) keep.add(picked)
-      const shown = []
-      let slots = RECENT_REMOTE_LIMIT
+      // all 本身是从新到旧排的，直接取前 N 个
+      const shown = all.slice(0, RECENT_REMOTE_LIMIT)
+      // 已装/最新/当前选中的即使排在 N 个之后也要能选到，否则用户切不回自己那个版本
       for (const version of all) {
-        if (keep.has(version)) { shown.push(version); continue }
-        if (slots > 0) { shown.push(version); slots -= 1 }
+        if (keep.has(version) && !shown.includes(version)) shown.push(version)
       }
-      return shown
+      return all.filter((version) => shown.includes(version))
     }
 
     function versionList() {
@@ -840,30 +1183,13 @@
     }
 
     /**
-     * "最新"不能只看 npm 的 latest 标签：dsh 发布时常把新的 rc 挂在 next 上，latest
-     * 还指着上一个（0.1.5-rc.2 就是这样被 0.1.5-rc.1 比下去的），界面于是给已装
-     * rc.2 的人一个往回降级的"更新"按钮。改成在已发布版本里取最高的那个。
-     *
-     * 但"忽略 alpha/beta"只对走在正式渠道的人成立：已经装了 0.1.6-alpha.2 的人若
-     * 还按忽略 alpha 算，最高只会得到更老的 0.1.5-rc.2，反而提示他"更新"（其实是
-     * 降级）。所以候选集跟着当前选中的版本走——选中的是 alpha/beta 就把实验版算
-     * 进去，否则维持"不被实验版打扰"。
+     * "最新"由服务端算好（server.js 的 latestRemoteFor）：在 latest/next/alpha 三个
+     * 标签和全部已发布版本里取最高的那个，只看 latest 标签会漏掉挂在 alpha/next 上
+     * 的新版本。以前这里自己算过一遍、还按当前选中的版本过滤 alpha/beta，结果和更新
+     * 提示的口径对不上，现在统一读这一个值。
      */
-    function latestRemoteVersion(version = versionValue) {
-      const experimental = EXPERIMENTAL.test(String(version || ''))
-      const candidates = []
-      for (const name of ['latest', 'next', 'alpha']) {
-        const tag = typeof remote.tags?.[name] === 'string' ? remote.tags[name].trim() : ''
-        if (tag && (experimental || !EXPERIMENTAL.test(tag))) candidates.push(tag)
-      }
-      for (const item of versionNames(remote.versions)) {
-        if (experimental || !EXPERIMENTAL.test(item)) candidates.push(item)
-      }
-      let best = ''
-      for (const item of candidates) {
-        if (!best || compareVersion(item, best) > 0) best = item
-      }
-      return best
+    function latestRemoteVersion() {
+      return String(remote.latest || '')
     }
 
     function preferredPick() {
@@ -872,7 +1198,7 @@
       if (userPicked && picked && versions.includes(picked)) return picked
       const running = runningInfo()
       if (running?.version && versions.includes(running.version)) return running.version
-      const latest = latestRemoteVersion(running?.version || installed[0] || '')
+      const latest = latestRemoteVersion()
       if (latest && installed.includes(latest)) return latest
       if (installed[0] && versions.includes(installed[0])) return installed[0]
       return latest || versions[0] || ''
@@ -888,7 +1214,7 @@
       const versions = visibleVersionList(allVersions)
       const hidden = allVersions.length - versions.length
       const current = preferredPick() || versions[0] || ''
-      const latest = latestRemoteVersion(current)
+      const latest = latestRemoteVersion()
       const nextOptions = versions.map((version) => ({
         value: version,
         text: version,
@@ -1041,7 +1367,7 @@
         try {
           await post('/api/stop', { version })
         } catch (error) {
-          alert(error.message)
+          notify(error.message)
         } finally {
           action = ''
           render()
@@ -1051,7 +1377,7 @@
       try {
         await startVersion(version)
       } catch (error) {
-        alert(error.message)
+        notify(error.message)
       }
     }
     restartEl.onclick = async () => {
@@ -1065,11 +1391,11 @@
       } catch (error) {
         action = ''
         render()
-        alert(error.message)
+        notify(error.message)
       }
     }
     updateEl.onclick = async () => {
-      const latest = latestRemoteVersion(selected())
+      const latest = latestRemoteVersion()
       if (!latest) return
       const running = runningInfo()
       const wasLive = Boolean(running && (running.status === 'running' || running.status === 'starting'))
@@ -1095,7 +1421,7 @@
       } catch (error) {
         action = ''
         render()
-        alert(error.message)
+        notify(error.message)
       }
     }
     removeEl.onclick = async () => {
@@ -1111,7 +1437,7 @@
       try {
         await post('/api/uninstall', { version })
       } catch (error) {
-        alert(error.message)
+        notify(error.message)
       } finally {
         action = ''
         render()
@@ -1125,11 +1451,13 @@
       post('/api/open', { url }).catch(() => {
         window.open(url, '_blank', 'noopener')
       })
-      history.replaceState({}, '', '/')
+      history.replaceState({}, '', homePath)
     }
 
     function maybeLaunch() {
       if (!fromLauncher || launchFollowed || !state.loaded) return
+      // 更新弹窗还开着：等用户选完再决定启不启动
+      if (askBlocking) return
       const running = runningInfo()
       if (running?.url && running.status === 'running') {
         followLaunch(running.url)
@@ -1154,7 +1482,7 @@
         action = ''
         launchRequested = false
         render()
-        alert(error.message)
+        notify(error.message)
       })
     }
 
@@ -1183,6 +1511,21 @@
       render()
       maybeLaunch()
     }
+
+    // 托盘退出后这个页面就没用了。规范上「只有一个历史条目的顶层页面」允许脚本
+    // 自己关，但浏览器不一定放行，所以关不掉时换成一张干净的告别页。
+    let launcherGone = false
+    function launcherExited() {
+      if (launcherGone) return
+      launcherGone = true
+      try { window.close() } catch { /* 浏览器不放行 */ }
+      setTimeout(() => {
+        const box = document.getElementById('gone')
+        if (box) box.hidden = false
+      }, 400)
+    }
+
+    document.getElementById('goneClose').onclick = () => window.close()
 
     function listenEvents() {
       const events = new EventSource('/api/events')
@@ -1227,6 +1570,20 @@
         }
         logEl.scrollTop = logEl.scrollHeight
       })
+      events.addEventListener('bye', () => launcherExited())
+      // 页面也可能是自己发现后端没了（推送没赶上、或页面刚打开），用断线兜底
+      events.onerror = async () => {
+        if (launcherGone) return
+        // EventSource 自己会重连，先确认服务端是真没了再收摊
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 900))
+          try {
+            await fetch('/api/state', { cache: 'no-store' })
+            return
+          } catch { /* 还没回来，继续确认 */ }
+        }
+        launcherExited()
+      }
     }
 
     function getJson(path) {
@@ -1257,7 +1614,7 @@
     getJson('/api/self').then((data) => {
       if (appVerEl) appVerEl.textContent = data.current || ''
       if (!data.update || !selfUpdateEl) return
-      const url = data.url || `https://github.com/yyh-001/dsh-launcher/releases/latest/download/DSH-Setup.exe`
+      const url = data.url || `https://github.com/yyh-001/DSH-X/releases/latest/download/DSH-Setup.exe`
       selfUpdateEl.hidden = false
       selfUpdateEl.textContent = data.latest ? `更新 ${data.latest}` : '更新'
       selfUpdateEl.title = data.latest ? `更新启动器到 ${data.latest}` : '更新启动器'
@@ -1265,6 +1622,181 @@
         post('/api/open', { url }).catch(() => { location.href = url })
       }
     }).catch(() => {})
+
+    // ---- 启动时检测到新版本：先问用户，定下来之前不自动启动 dsh ----
+    const askEl = document.getElementById('ask')
+    const askItemsEl = document.getElementById('askItems')
+    const askActionsEl = document.getElementById('askActions')
+    const askNoteEl = document.getElementById('askNote')
+    const askSkipEl = document.getElementById('askSkip')
+    let askShown = false
+    let askPending = null
+
+    function noteLink(href) {
+      const link = document.createElement('a')
+      link.className = 'note-more'
+      link.href = href
+      link.target = '_blank'
+      link.rel = 'noreferrer'
+      link.textContent = '在 GitHub 上查看完整发布说明 →'
+      return link
+    }
+
+    function renderNotes(box, data) {
+      box.textContent = ''
+      const blocks = data.blocks || []
+      if (!blocks.length) {
+        const empty = document.createElement('p')
+        empty.className = 'note-empty'
+        empty.textContent = '这个版本的更新内容不在最近的发布记录里。'
+        box.append(empty)
+      } else {
+        for (const block of blocks) {
+          const tag = block.type === 'li' ? 'div' : block.type === 'h' ? 'h4' : 'p'
+          const el = document.createElement(tag)
+          el.className = `note-${block.type}`
+          el.textContent = block.text
+          box.append(el)
+        }
+      }
+      if (data.url) box.append(noteLink(data.url))
+    }
+
+    function askRow(kind, name, from, to, buttonText, onClick) {
+      const item = document.createElement('div')
+      item.className = 'ask-item'
+      const what = document.createElement('div')
+      what.className = 'ask-what'
+      const title = document.createElement('div')
+      title.className = 'ask-name'
+      title.textContent = name
+      const ver = document.createElement('div')
+      ver.className = 'ask-ver'
+      ver.innerHTML = `${escapeHtml(from)} → <b>${escapeHtml(to)}</b>`
+      what.append(title, ver)
+
+      // 更新内容直接摊开显示，不用再点一次
+      const notes = document.createElement('div')
+      notes.className = 'ask-notes'
+      notes.textContent = '正在读取更新内容…'
+      getJson(`/api/changelog?kind=${kind}&version=${encodeURIComponent(to)}`)
+        .then((data) => renderNotes(notes, data))
+        .catch((error) => { notes.textContent = `读取更新内容失败：${error.message}` })
+
+      item.append(what, notes)
+
+      // 按钮不放行内，统一交给底栏和「暂不更新」并排
+      const action = document.createElement('button')
+      action.type = 'button'
+      action.className = 'primary'
+      action.textContent = buttonText
+      action.onclick = onClick
+      return { kind, item, action }
+    }
+
+    // handled=true：这次启动由调用方自己接管，别再走自动启动那条路
+    function dismissAsk(handled) {
+      askBlocking = false
+      askEl.hidden = true
+      if (handled) launchFollowed = true
+      history.replaceState({}, '', homePath)
+    }
+
+    function showAsk(update) {
+      askShown = true
+      askPending = update
+      askItemsEl.textContent = ''
+      askNoteEl.hidden = true
+      const rows = []
+      if (update.dsh) {
+        rows.push(askRow(
+          'dsh',
+          'dsh 本体',
+          update.dsh.current,
+          update.dsh.latest,
+          `更新并启动`,
+          async (event) => {
+            const btn = event.currentTarget
+            btn.disabled = true
+            btn.textContent = '正在更新…'
+            dismissAsk(true)
+            try {
+              await startVersion(update.dsh.latest)
+            } catch (error) {
+              notify(error.message)
+            }
+          },
+        ))
+      }
+      if (update.self) {
+        rows.push(askRow(
+          'self',
+          'DSH-X 启动器',
+          update.self.current,
+          update.self.latest || '最新',
+          '更新启动器',
+          (event) => {
+            const btn = event.currentTarget
+            btn.disabled = true
+            btn.textContent = '正在下载…'
+            // 安装程序会把界面交给新版启动器，这次就不启动 dsh 了
+            launchFollowed = true
+            askBlocking = false
+            history.replaceState({}, '', homePath)
+            const url = update.self.url
+              || 'https://github.com/yyh-001/DSH-X/releases/latest/download/DSH-Setup.exe'
+            post('/api/open', { url }).catch(() => { location.href = url })
+            askNoteEl.textContent = '安装程序已开始下载，装好后会自动打开新版启动器。'
+            askNoteEl.hidden = false
+          },
+        ))
+      }
+      for (const row of rows) askItemsEl.append(row.item)
+      // 底部一排：暂不更新在最左，启动器更新次之，dsh 更新作为主操作压最右
+      askActionsEl.textContent = ''
+      askActionsEl.append(askSkipEl)
+      for (const kind of ['self', 'dsh']) {
+        for (const row of rows.filter((item) => item.kind === kind)) askActionsEl.append(row.action)
+      }
+      askEl.hidden = false
+    }
+
+    // 有待更新就得先让用户表态。浏览器模式由启动器带 ?ask 打开，app 窗口模式由页面自己问——
+    // 那条路不能靠服务端，因为窗口只加载一个固定的 ?window=1 地址（省掉一次会超时的往返）。
+    if (askBlocking || inAppWindow) {
+      getJson('/api/pending').then(({ update }) => {
+        if (askShown) return
+        if (!update) {
+          dismissAsk(false)
+          maybeLaunch()
+          return
+        }
+        askBlocking = true
+        showAsk(update)
+      }).catch(() => {
+        // 问不到就别拦着，按老样子启动
+        dismissAsk(false)
+        maybeLaunch()
+      })
+    }
+
+    askSkipEl.onclick = async () => {
+      // 记住跳过的版本，下次别拿同一个版本再问一遍
+      const skip = {}
+      if (askPending?.dsh) skip.dsh = askPending.dsh.latest
+      if (askPending?.self) skip.self = askPending.self.latest
+      if (Object.keys(skip).length) post('/api/pending/skip', skip).catch(() => {})
+      dismissAsk(false)
+      // 直接起：不能只靠 maybeLaunch，它只服务浏览器模式那条链路，app 窗口模式下是空转的
+      try {
+        const data = await post('/api/launch')
+        if (data?.url) {
+          await post('/api/open', { url: data.url }).catch(() => window.open(data.url, '_blank', 'noopener'))
+        }
+      } catch (error) {
+        notify(error.message)
+      }
+    }
 
     const autoStartEl = document.getElementById('autoStart')
     const seedMarketEl = document.getElementById('seedMarket')
@@ -1382,5 +1914,7 @@
 
     loadSettings()
   </script>
+  <script src="/mascot.js" defer></script>
+  <script src="/water.js" defer></script>
 </body>
 </html>

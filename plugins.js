@@ -19,11 +19,35 @@ const PROTECTED_PACKAGE_RE = /^@deepseek-ai\//
 /** 市场自己的运行时命名空间，永久补丁行会变成孤儿。 */
 const MARKET_ROW_RE = /^(?:mkt-|client-|include:)/
 
-/** 启动失败输出里点名的失败插件行：failed to import loader entry <行> (<包>)。 */
-const FAILED_ROW_RE = /failed to import loader entry\s+(\S+)\s+\(([^)\s]+)\)/g
+/** 启动失败输出里点名的失败插件行：failed to import/apply loader entry <行> (<包>)。 */
+const FAILED_ROW_RE = /failed to (?:import|apply) loader entry\s+(\S+)\s+\(([^)\s]+)\)/g
 
 /** 启动失败输出里解析不到的 profile bundle（依赖缺失或断链，可重建修复）。 */
 const UNRESOLVED_BUNDLE_RE = /cannot resolve profile bundle\s+"([^"]+)"/g
+
+/**
+ * 从启动失败输出里认出被点名的已装插件。
+ *
+ * 报错形状一直在变，按形状解析必然漏：老的是 `failed to import loader entry X (pkg)`，
+ * 新版会变成 `failed to apply loader entry <核心 loader>`，而真正出问题的插件藏在 cause
+ * 里（`typert-loader: dsh-cost-meter invocation "..." result codec has no create()`）。
+ * 所以反过来做——拿已装插件的名字去文本里找，谁被点名就是谁；越靠前出现的越可能是根因，
+ * 因为 cause 的开头就是第一个失败项。
+ */
+export function pluginsNamedInFailure(profileDir, text) {
+  const haystack = String(text ?? '')
+  const found = []
+  for (const plugin of listPlugins(profileDir).plugins) {
+    if (!plugin.enabled || !plugin.toggleable || plugin.official || !plugin.ids.length) continue
+    // 包名整词匹配，别让 dsh-cost 命中 dsh-cost-meter
+    const pattern = new RegExp(`(^|[^\\w@/.-])${escapeRegExp(plugin.name)}(?![\\w-])`)
+    const at = haystack.search(pattern)
+    if (at < 0) continue
+    found.push({ name: plugin.name, ids: plugin.ids, at })
+  }
+  found.sort((a, b) => a.at - b.at)
+  return found
+}
 
 export function profileDirOf(dshHome, profile = 'web') {
   return join(dshHome, 'profiles', profile)
