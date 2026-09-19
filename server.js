@@ -813,6 +813,39 @@ function looksLikePeerFailure(text) {
  *
  * 悬空的链接没有任何用处，摘掉它下次安装会重新建。注意只摘链接本身，不动目标。
  */
+/**
+ * 失败像是「这台机器读不了 junction」吗。
+ *
+ * 有用户的机器上 pnpm 报告装完了、却在回读自己刚建的 junction 时崩掉，报
+ * `UNKNOWN: unknown error, open ...node_modules\<pkg>\package.json`，退出码 -4094
+ * （libuv 的 UV_UNKNOWN，意思是碰到了一个它没有映射的 Win32 错误码）。那台机器上连
+ * 用两个普通真实目录新建的 junction 都读不了——不是链接悬空，是链接根本没法被跟随。
+ */
+function looksLikeLinkFailure(text) {
+  return /unknown error/i.test(String(text || '')) && /node_modules/i.test(String(text || ''))
+}
+
+/**
+ * 让 pnpm 彻底不用链接：包平铺成真实目录、从存库复制而不是硬链。
+ *
+ * 这是上面那种机器唯一走得通的路（符号链接要管理员权限或开发者模式，junction 又读不了，
+ * 没有第三种链接类型可用）。只在真撞上这个问题时才写，别去动本来正常的机器。
+ * .npmrc 不在插件管理器的跟踪范围内，不会被它覆盖。
+ */
+async function useHoistedLinker() {
+  const file = join(homeDir(), 'profiles', PROFILE_NAME, '.npmrc')
+  let text = ''
+  try {
+    text = await readFile(file, 'utf8')
+  } catch {
+    text = ''
+  }
+  if (/(^|\n)node-linker\s*=/.test(text)) return false
+  const head = text && !text.endsWith('\n') ? `${text}\n` : text
+  await writeFile(file, `${head}node-linker=hoisted\npackage-import-method=copy\n`)
+  return true
+}
+
 function pruneDanglingLinks(dir) {
   let removed = 0
   let entries = []
@@ -865,13 +898,17 @@ async function addPlugin(version, spec) {
         // pnpm 自动装 peer 会 404；关掉它重试一次（与插件市场同款做法）
         pushLog(`${error instanceof Error ? error.message : error}；改用不自动装 peer 重试`)
         await runPluginCommand(ver, ['add', '-w', pkg, '--config.auto-install-peers=false'], `dsh plugin add ${pkg}`)
-      } else {
-        // 不是 peer 的问题就别乱换参数。用户机器上常见的是杀毒软件正在扫刚写进去的文件
-        // ——Windows 上表现为 "unknown error"（退出码是 libuv 的 UV_UNKNOWN，认不出那个
-        // Win32 错误码），这时候原样等一会儿再来一次往往就过了。
-        pushLog(`${error instanceof Error ? error.message : error}；等 3 秒原样重试一次`)
-        await new Promise((resolve) => setTimeout(resolve, 3000))
+      } else if (looksLikeLinkFailure(text) && await useHoistedLinker()) {
+        // 这台机器读不了 junction（见 looksLikeLinkFailure 的说明）。让 pnpm 不用任何
+        // 链接重来一次——有用户的机器上正是这两行解决了问题。
+        pushLog('这台机器读不了目录链接，改用真实目录（node-linker=hoisted）重试')
+        const broken = pruneDanglingLinks(join(profileDir(), 'node_modules'))
+        if (broken) pushLog(`先清理了 ${broken} 个悬空的链接`)
         await runPluginCommand(ver, ['add', '-w', pkg], `dsh plugin add ${pkg}`)
+      } else {
+        // 认不出原因就不硬试：装不上就装不上，报出来让人看。
+        // 原样重试没有意义——第一次失败的原因第二次还在，只会把终端刷满。
+        throw error
       }
     }
     pushLog(`${pkg} 已在 web profile`)
@@ -912,9 +949,14 @@ async function repairProfileDeps(version, error) {
   }
 }
 
+// 这次运行里预装已经失败过。启动失败时的自动修复会重跑启动流程，每次都重试预装的话
+// 会把失败信息刷满终端，而失败原因并不会自己消失——留到下次启动再试。
+let marketSeedFailed = false
+
 async function seedMarket(version) {
   const settings = await loadSettings()
   if (settings.seedMarket === false) return
+  if (marketSeedFailed) return
   const plugins = await installedPlugins()
   // 清单里写着不代表真的装好了：pnpm 中途失败、或被杀毒软件拦下的时候，会在清单里留下
   // 名字却只留一个空壳目录（正是 "unknown error, open ...dshmarket\package.json" 那种）。
@@ -926,7 +968,8 @@ async function seedMarket(version) {
   try {
     await addPlugin(version, MARKET_PKG)
   } catch (error) {
-    pushLog(`预装 dshmarket 失败: ${error instanceof Error ? error.message : error}`)
+    marketSeedFailed = true
+    pushLog(`预装 dshmarket 失败: ${error instanceof Error ? error.message : error}（本次运行不再重试，可在插件页手动安装）`)
   }
 }
 
