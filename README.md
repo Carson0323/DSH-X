@@ -3,14 +3,20 @@
 </p>
 
 <p align="center">
-  <a href="https://yyh-001.github.io/dsh-launcher/">主页</a>
+  <a href="https://yyh-001.github.io/DSH-X/">主页</a>
   ·
-  <a href="https://github.com/yyh-001/dsh-launcher/releases/latest/download/DSH-Setup.exe">下载</a>
+  <a href="https://github.com/yyh-001/DSH-X/releases/latest/download/DSH-Setup.exe">下载</a>
   ·
-  <a href="https://github.com/yyh-001/dsh-launcher">Star</a>
+  <a href="https://github.com/yyh-001/DSH-X">Star</a>
 </p>
 
-DeepSeek Harness 轻量 Windows 启动器。选一个版本，启动 dsh web。
+DeepSeek Harness 轻量 Windows 启动器。选一个版本，在系统浏览器中启动 DSH Web。
+
+> [!IMPORTANT]
+> **DSH-X 启动的是 DeepSeek Harness 官方原版 Web 页面，不是桌面端。**  
+> 它只负责版本安装、启动和插件管理，不内嵌 WebView，不修改或重做 DSH 的网页界面。DSH-X 本身是社区开源项目，并非 DeepSeek 官方产品。
+
+## 功能
 
 - **选版本即用**：启动 / 停止 / 重启 / 更新 / 卸载
 - **插件页**：列出已装插件一键开关
@@ -20,21 +26,28 @@ DeepSeek Harness 轻量 Windows 启动器。选一个版本，启动 dsh web。
 - **更新留旧版**：只保留最新的和最近装的一个（回退够用），更旧的装完自动清理
 - **托盘常驻**：关网页不退出，界面走系统浏览器
 - **自带 Node / npm**：安装包含便携 `node.exe` 与 npm 10，镜像源 npmmirror
-- **同时只跑一个版本**：首次可预装 `dshmarket`
+- **同时只跑一个版本**：避免不同版本争用端口和数据
+- **首次安装可预装市场**：可自动安装 `dshmarket`
 
 交流 / 反馈：**QQ 群 [993579665](https://qm.qq.com/q/7AD2g70HqS)**（[点击加入](https://qm.qq.com/q/7AD2g70HqS)）
 
+## 界面预览
+
 <p align="center">
-  <img src="docs/screenshot-home.png" alt="控制" width="720" />
+  <img src="docs/screenshot-home.png" alt="DSH-X 控制页" width="820" />
 </p>
 
 <p align="center">
-  <img src="docs/screenshot-settings.png" alt="设置" width="720" />
+  <img src="docs/screenshot-plugins.png" alt="DSH-X 插件页" width="820" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshot-settings.png" alt="DSH-X 设置页" width="820" />
 </p>
 
 ## 使用
 
-Windows 安装 [DSH-Setup.exe](https://github.com/yyh-001/dsh-launcher/releases/latest) 后，桌面打开 **DSH-X**。管理页：`http://127.0.0.1:3780/`。
+Windows 安装 [DSH-Setup.exe](https://github.com/yyh-001/DSH-X/releases/latest) 后，从桌面打开 **DSH-X**。启动器管理页和 DSH 官方原版 Web 界面都会使用系统默认浏览器打开；管理页地址为 `http://127.0.0.1:3780/`。
 
 ## 开发
 

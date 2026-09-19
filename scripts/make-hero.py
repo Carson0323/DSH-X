@@ -2,13 +2,13 @@
 
     python scripts/make-hero.py
 
-Style follows the docs landing page: near-black background with the same soft
-radial glow, the app icon, and the product name.  The icon comes from
-assets/icon.png, so regenerating the icon and re-running this keeps the banner
-in sync.
+Style follows the docs landing page and the launcher: the same pale blue radial
+gradient, the app icon with a soft shadow, and the product name in the accent
+blue.  The icon comes from assets/icon.png, so regenerating the icon and
+re-running this keeps the banner in sync.
 """
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import importlib.util
 import os
 
@@ -17,14 +17,19 @@ ICON = os.path.join(ROOT, "assets", "icon.png")
 OUT = os.path.join(ROOT, "docs", "hero.png")
 
 W, H = 1536, 1024
-BG = (5, 7, 11)
-GLOW = (255, 255, 255)
-GLOW_ALPHA = 0.05
+# Same stops as the landing page's .backdrop:
+# radial-gradient(ellipse at 25% 10%, #f1fbff, #d9eaf7 65%, #d2e3f5)
+STOPS = [(0.0, (241, 251, 255)), (0.65, (217, 234, 247)), (1.0, (210, 227, 245))]
+CENTER = (0.25, 0.10)
+TITLE_COLOR = (59, 111, 224)
+TAGLINE_COLOR = (107, 125, 156)
+SHADOW_COLOR = (86, 122, 180)
 ICON_SIZE = 320
 TITLE = "DSH-X"
-TAGLINE = "选一个版本，启动 dsh web"
-TITLE_FONT = r"C:\Windows\Fonts\segoeuib.ttf"
-TAGLINE_FONT = r"C:\Windows\Fonts\MiSans-Regular.otf"
+TAGLINE = "官方原版 Web，不是桌面端"
+FONT_ROOT = r"C:\Windows\Fonts" if os.name == "nt" else "/mnt/c/Windows/Fonts"
+TITLE_FONT = os.path.join(FONT_ROOT, "segoeuib.ttf")
+TAGLINE_FONT = os.path.join(FONT_ROOT, "MiSans-Regular.otf")
 
 
 def rounded_icon(size):
@@ -35,37 +40,69 @@ def rounded_icon(size):
     return module.fit(size, Image.open(ICON).convert("RGBA"))
 
 
-def radial_glow(size, center, radius, alpha):
-    """Cheap radial gradient: draw at low res and upscale."""
-    small = Image.new("L", (size[0] // 8, size[1] // 8), 0)
+def _mix(a, b, t):
+    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
+def _sample(t):
+    for i in range(len(STOPS) - 1):
+        t0, c0 = STOPS[i]
+        t1, c1 = STOPS[i + 1]
+        if t <= t1 or i == len(STOPS) - 2:
+            k = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
+            return _mix(c0, c1, max(0.0, min(1.0, k)))
+    return STOPS[-1][1]
+
+
+def radial_bg(size):
+    """CSS `radial-gradient(ellipse at CX CY, ...)` with the default farthest-corner
+    size: draw at low res, then upscale — a full-res per-pixel loop is far too slow."""
+    cx, cy = size[0] * CENTER[0], size[1] * CENTER[1]
+    dx, dy = size[0] - cx, size[1] - cy
+    # radii that put the farthest corner exactly on the gradient's 100% stop
+    k = ((dx / size[0]) ** 2 + (dy / size[1]) ** 2) ** 0.5
+    rx, ry = k * size[0], k * size[1]
+
+    small = Image.new("RGB", (size[0] // 8, size[1] // 8))
     px = small.load()
     sw, sh = small.size
-    cx, cy = center[0] / 8, center[1] / 8
-    rx, ry = radius[0] / 8, radius[1] / 8
     for y in range(sh):
         for x in range(sw):
-            d = (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2) ** 0.5
-            if d < 1:
-                px[x, y] = int(alpha * 255 * (1 - d) ** 1.5)
+            d = (((x + 0.5) * 8 - cx) / rx) ** 2 + (((y + 0.5) * 8 - cy) / ry) ** 2
+            px[x, y] = _sample(min(1.0, d ** 0.5))
     return small.resize(size, Image.Resampling.BILINEAR)
 
 
+def drop_shadow(icon, blur=28, offset=(0, 16), alpha=70):
+    """Soft shadow so the white icon tile lifts off the pale blue background."""
+    pad = blur * 3
+    w, h = icon.size
+    mask = icon.getchannel("A").point(lambda v: v * alpha // 255)
+    solid = Image.new("RGBA", (w, h), SHADOW_COLOR + (0,))
+    solid.putalpha(mask)
+    canvas = Image.new("RGBA", (w + pad * 2, h + pad * 2), (0, 0, 0, 0))
+    canvas.paste(solid, (pad + offset[0], pad + offset[1]), solid)
+    return canvas.filter(ImageFilter.GaussianBlur(blur)), pad
+
+
 def main():
-    base = Image.new("RGB", (W, H), BG)
-    glow = radial_glow((W, H), (W * 0.16, H * 0.42), (720, 480), GLOW_ALPHA)
-    base.paste(Image.new("RGB", (W, H), GLOW), (0, 0), glow)
+    base = radial_bg((W, H))
 
     icon = rounded_icon(512).resize((ICON_SIZE, ICON_SIZE), Image.Resampling.LANCZOS)
     x = (W - ICON_SIZE) // 2
-    base.paste(icon, (x, 196), icon)
+    icon_y = 196
+
+    shadow, pad = drop_shadow(icon)
+    base.paste(shadow, (x - pad, icon_y - pad), shadow)
+    base.paste(icon, (x, icon_y), icon)
 
     draw = ImageDraw.Draw(base)
     title_font = ImageFont.truetype(TITLE_FONT, 132)
     tag_font = ImageFont.truetype(TAGLINE_FONT, 44)
 
     box = draw.textbbox((0, 0), TITLE, font=title_font)
-    title_y = 196 + ICON_SIZE + 74 - box[1]
-    draw.text(((W - (box[2] - box[0])) / 2 - box[0], title_y), TITLE, font=title_font, fill=(255, 255, 255))
+    title_y = icon_y + ICON_SIZE + 74 - box[1]
+    draw.text(((W - (box[2] - box[0])) / 2 - box[0], title_y), TITLE, font=title_font, fill=TITLE_COLOR)
 
     tag_box = draw.textbbox((0, 0), TAGLINE, font=tag_font)
     tag_y = title_y + box[3] + 42
@@ -73,7 +110,7 @@ def main():
         ((W - (tag_box[2] - tag_box[0])) / 2 - tag_box[0], tag_y),
         TAGLINE,
         font=tag_font,
-        fill=(255, 255, 255, 140),
+        fill=TAGLINE_COLOR,
     )
 
     base.save(OUT)
