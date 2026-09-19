@@ -800,7 +800,7 @@
       <div class="ask-items" id="askItems"></div>
       <p class="ask-note" id="askNote" hidden></p>
       <div class="ask-actions" id="askActions">
-        <button type="button" class="ghost" id="askSkip">暂不更新，直接启动</button>
+        <button type="button" class="ghost" id="askSkip">暂不更新</button>
       </div>
     </div>
   </div>
@@ -1619,7 +1619,9 @@
       selfUpdateEl.textContent = data.latest ? `更新 ${data.latest}` : '更新'
       selfUpdateEl.title = data.latest ? `更新启动器到 ${data.latest}` : '更新启动器'
       selfUpdateEl.onclick = () => {
-        post('/api/open', { url }).catch(() => { location.href = url })
+        // 先问一句再把新版本摆出来（弹窗里会拉这个版本的更新内容），
+        // 而不是直接下载安装包——那会立刻弹出安装程序，用户连看都没看清
+        showAsk({ dsh: null, self: { current: data.current, latest: data.latest, url } })
       }
     }).catch(() => {})
 
@@ -1739,15 +1741,14 @@
             const btn = event.currentTarget
             btn.disabled = true
             btn.textContent = '正在下载…'
-            // 安装程序会把界面交给新版启动器，这次就不启动 dsh 了
-            launchFollowed = true
-            askBlocking = false
-            history.replaceState({}, '', homePath)
-            const url = update.self.url
-              || 'https://github.com/yyh-001/DSH-X/releases/latest/download/DSH-Setup.exe'
-            post('/api/open', { url }).catch(() => { location.href = url })
-            askNoteEl.textContent = '安装程序已开始下载，装好后会自动打开新版启动器。'
+            askNoteEl.textContent = '正在下载新版本，下完会自动静默安装并重启启动器，你不用管。'
             askNoteEl.hidden = false
+            // 服务端下完就交给更新助手并退出；这里走到失败只有一种情况：下载那步没成
+            post('/api/self/update').catch((error) => {
+              btn.disabled = false
+              btn.textContent = '更新启动器'
+              askNoteEl.textContent = `自动更新失败：${error.message}。可以从 GitHub 的发布页手动下载安装包。`
+            })
           },
         ))
       }
@@ -1780,22 +1781,13 @@
       })
     }
 
-    askSkipEl.onclick = async () => {
+    askSkipEl.onclick = () => {
       // 记住跳过的版本，下次别拿同一个版本再问一遍
       const skip = {}
       if (askPending?.dsh) skip.dsh = askPending.dsh.latest
       if (askPending?.self) skip.self = askPending.self.latest
       if (Object.keys(skip).length) post('/api/pending/skip', skip).catch(() => {})
       dismissAsk(false)
-      // 直接起：不能只靠 maybeLaunch，它只服务浏览器模式那条链路，app 窗口模式下是空转的
-      try {
-        const data = await post('/api/launch')
-        if (data?.url) {
-          await post('/api/open', { url: data.url }).catch(() => window.open(data.url, '_blank', 'noopener'))
-        }
-      } catch (error) {
-        notify(error.message)
-      }
     }
 
     const autoStartEl = document.getElementById('autoStart')

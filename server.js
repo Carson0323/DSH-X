@@ -1,8 +1,8 @@
 import { execFile, spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { cmpVer, installSpec, listPackage, parseVer } from './registry.js'
@@ -252,6 +252,74 @@ function pushLog(line) {
 function emit(event, data) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
   for (const res of clients) res.write(payload)
+}
+
+/**
+ * 全自动更新：把新安装包下载到临时目录，交给一个脱离的 cmd 助手，等本进程退出后静默
+ * 安装，再把新版拉起来。
+ *
+ * 为什么要这个助手：安装包要替换的文件正被我们（DSH.exe、node、WebView2）占着，不退出
+ * 装不了；而静默模式下安装包自己不会启动程序（[Run] 那条带着 skipifsilent）。助手用
+ * cmd 而不是 node，是因为 node.exe 就在安装目录里，会被安装包自己替换掉。
+ */
+async function startSelfUpdate() {
+  const info = await checkSelfUpdate()
+  const target = join(tmpdir(), `DSH-Setup-${info.latest || 'latest'}.exe`)
+  pushLog(`下载更新${info.latest ? ` ${info.latest}` : ''}…`)
+
+  const res = await fetch(info.url, { redirect: 'follow', signal: AbortSignal.timeout(10 * 60 * 1000) })
+  if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`)
+  const total = Number(res.headers.get('content-length') || 0)
+  const chunks = []
+  let got = 0
+  let shown = -1
+  for await (const chunk of res.body) {
+    chunks.push(chunk)
+    got += chunk.length
+    if (total) {
+      const pct = Math.floor((got / total) * 100)
+      if (pct >= shown + 10) {
+        shown = pct
+        pushLog(`已下载 ${pct}%`)
+      }
+    }
+  }
+  const buffer = Buffer.concat(chunks)
+  // 只认 PE 可执行文件：拿到的更可能是错误页、或者被掐断的半截文件
+  if (buffer.length < 5 * 1024 * 1024 || buffer[0] !== 0x4d || buffer[1] !== 0x5a) {
+    throw new Error(`下载到的不是安装包（${buffer.length} 字节）`)
+  }
+  await writeFile(target, buffer)
+  pushLog(`更新已就绪：${target}（${(buffer.length / 1048576).toFixed(1)} MB）`)
+
+  // 助手是一条 PowerShell 命令：等本进程退出 → 静默安装 → 拉起新版。
+  //
+  // 为什么不是 .cmd，两个坑都实测过，值得记下来：
+  // 一是 cmd 按 GBK 读脚本文件，里面只要有中文就会把命令行解析乱（实测把 set 那行吃掉
+  // 半截，报 'RGET_PID' 不是内部或外部命令）；二是 tasklist 的输出是本地化的，按列位置
+  // 判断进程在不在靠不住——判断失败会让这个等待变成死循环，更新就永远卡住不动。
+  // Get-Process 两样都不怕，而且一整条命令不需要落盘。
+  const quote = (path) => `'${path.replace(/'/g, "''")}'`
+  const ps = [
+    `$ErrorActionPreference='Stop'`,
+    `while (Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 400 }`,
+    `Start-Process -FilePath ${quote(target)} -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait`,
+    `Start-Process -FilePath ${quote(join(ROOT, 'DSH.exe'))}`,
+  ].join('; ')
+
+  // 助手的输出（含安装程序的）留一份，装失败了有据可查
+  const logFd = openSync(join(LOG_DIR, 'update.log'), 'a')
+  try {
+    spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      windowsHide: true,
+    }).unref()
+  } finally {
+    closeSync(logFd)
+  }
+  pushLog('已交给更新助手，退出后自动安装并重启')
+  return { latest: info.latest, file: target }
 }
 
 /**
@@ -702,18 +770,37 @@ async function installedPlugins() {
 function runPluginCommand(ver, args, label) {
   return new Promise((resolve, reject) => {
     const child = spawnDsh(ver, ['plugin', '--profile', PROFILE_NAME, ...args])
-    child.stdout.on('data', (buf) => {
-      for (const line of buf.toString('utf8').split(/\r?\n/)) pushLog(`[plugin] ${line}`)
-    })
-    child.stderr.on('data', (buf) => {
-      for (const line of buf.toString('utf8').split(/\r?\n/)) pushLog(`[plugin] ${line}`)
-    })
+    // 留一份输出尾巴挂在错误上：只报退出码的话调用方没法判断是哪种失败，只能瞎猜着重试
+    const tail = []
+    const keep = (buf) => {
+      for (const line of buf.toString('utf8').split(/\r?\n/)) {
+        const text = redact(line, secretValues)
+        tail.push(text)
+        if (tail.length > 40) tail.shift()
+        pushLog(`[plugin] ${text}`)
+      }
+    }
+    child.stdout.on('data', keep)
+    child.stderr.on('data', keep)
     child.on('error', reject)
     child.on('close', (code) => {
       if (code === 0) resolve()
-      else reject(new Error(`${label} 退出码 ${code}`))
+      else {
+        const error = new Error(`${label} 退出码 ${code}`)
+        error.tail = tail.slice(-40)
+        reject(error)
+      }
     })
   })
+}
+
+/**
+ * 这个失败像是 pnpm 装 peer 撞出来的吗——只有这类才值得换掉 auto-install-peers 重试。
+ * 插件声明的 @deepseek-ai/* peer 在 registry 上只有预发布版，pnpm 自动装 peer 会求交
+ * 失败或 404。
+ */
+function looksLikePeerFailure(text) {
+  return /ERR_PNPM_NO_MATCHING_VERSION|ERR_PNPM_PEER_DEP|auto-install-peers|peer dep|no matching version|404 Not Found/i.test(String(text || ''))
 }
 
 async function addPlugin(version, spec) {
@@ -730,10 +817,20 @@ async function addPlugin(version, spec) {
     try {
       await runPluginCommand(ver, ['add', '-w', pkg], `dsh plugin add ${pkg}`)
     } catch (error) {
-      // 插件声明的 @deepseek-ai/* peer 多为运行时注入、registry 上只有 prerelease，
-      // pnpm 自动装 peer 会 404；关掉它重试一次（与插件市场同款做法）
-      pushLog(`${error instanceof Error ? error.message : error}；改用不自动装 peer 重试`)
-      await runPluginCommand(ver, ['add', '-w', pkg, '--config.auto-install-peers=false'], `dsh plugin add ${pkg}`)
+      const text = `${error instanceof Error ? error.message : error}\n${(error?.tail || []).join('\n')}`
+      if (looksLikePeerFailure(text)) {
+        // 插件声明的 @deepseek-ai/* peer 多为运行时注入、registry 上只有 prerelease，
+        // pnpm 自动装 peer 会 404；关掉它重试一次（与插件市场同款做法）
+        pushLog(`${error instanceof Error ? error.message : error}；改用不自动装 peer 重试`)
+        await runPluginCommand(ver, ['add', '-w', pkg, '--config.auto-install-peers=false'], `dsh plugin add ${pkg}`)
+      } else {
+        // 不是 peer 的问题就别乱换参数。用户机器上常见的是杀毒软件正在扫刚写进去的文件
+        // ——Windows 上表现为 "unknown error"（退出码是 libuv 的 UV_UNKNOWN，认不出那个
+        // Win32 错误码），这时候原样等一会儿再来一次往往就过了。
+        pushLog(`${error instanceof Error ? error.message : error}；等 3 秒原样重试一次`)
+        await new Promise((resolve) => setTimeout(resolve, 3000))
+        await runPluginCommand(ver, ['add', '-w', pkg], `dsh plugin add ${pkg}`)
+      }
     }
     pushLog(`${pkg} 已在 web profile`)
   } finally {
@@ -775,7 +872,13 @@ async function seedMarket(version) {
   const settings = await loadSettings()
   if (settings.seedMarket === false) return
   const plugins = await installedPlugins()
-  if (plugins.includes(MARKET_PKG)) return
+  // 清单里写着不代表真的装好了：pnpm 中途失败、或被杀毒软件拦下的时候，会在清单里留下
+  // 名字却只留一个空壳目录（正是 "unknown error, open ...dshmarket\package.json" 那种）。
+  // 只看清单的话以后每次启动都会跳过预装，那个坏目录就永远修不回来。
+  if (plugins.includes(MARKET_PKG)
+    && existsSync(join(profileDir(), 'node_modules', MARKET_PKG, 'package.json'))) {
+    return
+  }
   try {
     await addPlugin(version, MARKET_PKG)
   } catch (error) {
@@ -1269,6 +1372,19 @@ async function handleApi(req, res, url) {
   const body = req.method === 'POST' ? await readJson(req) : {}
   if (req.method === 'POST' && url.pathname === '/api/pending/skip') {
     send(res, 200, await skipPendingUpdate(body))
+    return
+  }
+  if (req.method === 'POST' && url.pathname === '/api/self/update') {
+    // 先回页面，再收尾退出：安装包已经下好、助手也起来了，把位子让给它
+    try {
+      const result = await startSelfUpdate()
+      send(res, 200, result)
+      shutdown().finally(() => process.exit(0))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      pushLog(`自动更新失败：${message}`)
+      send(res, 500, { error: message })
+    }
     return
   }
   if (req.method === 'POST' && url.pathname === '/api/restart') {
