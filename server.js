@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -803,6 +803,46 @@ function looksLikePeerFailure(text) {
   return /ERR_PNPM_NO_MATCHING_VERSION|ERR_PNPM_PEER_DEP|auto-install-peers|peer dep|no matching version|404 Not Found/i.test(String(text || ''))
 }
 
+/**
+ * 清掉 node_modules 里悬空的链接（断链），返回清掉的数量。
+ *
+ * Windows 上 pnpm 用 junction 把 node_modules 里的包指到 .pnpm，dsh 的模块回退也建成
+ * junction。目标被删过之后（pnpm 存库清理、外部工具、同步软件）这些链接就悬空了：打开
+ * 它会返回一个 libuv 认不出的 Win32 错误码——用户看到的就是 pnpm 报告安装成功、紧接着
+ * "UNKNOWN: unknown error, open .../dshmarket/package.json"，退出码 -4094（UV_UNKNOWN）。
+ *
+ * 悬空的链接没有任何用处，摘掉它下次安装会重新建。注意只摘链接本身，不动目标。
+ */
+function pruneDanglingLinks(dir) {
+  let removed = 0
+  let entries = []
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return 0
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name)
+    let isLink = false
+    try {
+      isLink = lstatSync(path).isSymbolicLink()
+    } catch {
+      continue
+    }
+    if (!isLink) continue
+    try {
+      statSync(path)          // 能 stat 到说明链接是通的
+      continue
+    } catch {
+      try {
+        unlinkSync(path)
+        removed += 1
+      } catch { /* 摘不掉就算了，别把安装本身搞挂 */ }
+    }
+  }
+  return removed
+}
+
 async function addPlugin(version, spec) {
   const ver = safeVersion(version)
   const pkg = safeSpec(spec)
@@ -812,6 +852,8 @@ async function addPlugin(version, spec) {
   pluginBusy = true
   await mkdir(homeDir(), { recursive: true })
   await ensureProfileNpmrc()
+  const broken = pruneDanglingLinks(join(profileDir(), 'node_modules'))
+  if (broken) pushLog(`先清理了 ${broken} 个悬空的链接（断链会让安装报 unknown error）`)
   pushLog(`安装插件 ${pkg} 到 web profile`)
   try {
     try {
@@ -852,6 +894,8 @@ async function repairProfileDeps(version, error) {
     pushLog(`[兼容] profile 里解析不到 ${bundles.join('、')}，但正在装插件，跳过依赖重建`)
     return false
   }
+  const broken = pruneDanglingLinks(join(profileDir(), 'node_modules'))
+  if (broken) pushLog(`[兼容] 先清理了 ${broken} 个悬空的链接`)
   pushLog(`[兼容] profile 里解析不到 ${bundles.join('、')}，重建 profile 依赖（dsh plugin install）…`)
   pluginBusy = true
   try {

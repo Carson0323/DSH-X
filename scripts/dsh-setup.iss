@@ -1,6 +1,6 @@
 #define MyAppName "DSH-X"
 #ifndef MyAppVersion
-#define MyAppVersion "0.1.9"
+#define MyAppVersion "0.1.10"
 #endif
 #define MyAppPublisher "yyh"
 #define MyAppExeName "DSH.exe"
