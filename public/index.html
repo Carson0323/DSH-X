@@ -799,6 +799,7 @@
       <h2 class="ask-title" id="askTitle">检测到新版本</h2>
       <div class="ask-items" id="askItems"></div>
       <p class="ask-note" id="askNote" hidden></p>
+      <div class="progress" id="askProgress" hidden><div class="progress-bar" id="askProgressBar"></div></div>
       <div class="ask-actions" id="askActions">
         <button type="button" class="ghost" id="askSkip">暂不更新</button>
       </div>
@@ -1570,6 +1571,31 @@
         }
         logEl.scrollTop = logEl.scrollHeight
       })
+      // 更新下载的进度：弹窗里那根进度条就是靠它
+      events.addEventListener('selfUpdate', (event) => {
+        let data
+        try { data = JSON.parse(event.data) } catch { return }
+        const wrap = document.getElementById('askProgress')
+        const bar = document.getElementById('askProgressBar')
+        if (!wrap || !bar) return
+        if (data.phase === 'download') {
+          wrap.hidden = false
+          wrap.classList.remove('indeterminate')
+          const pct = data.total ? Math.round((data.done / data.total) * 100) : 0
+          bar.style.width = `${pct}%`
+          askNoteEl.hidden = false
+          const mb = (n) => (n / 1048576).toFixed(1)
+          askNoteEl.textContent = `正在下载新版本 ${pct}%（${mb(data.done)} / ${data.total ? mb(data.total) : '?'} MB）`
+        } else if (data.phase === 'ready') {
+          wrap.hidden = false
+          wrap.classList.remove('indeterminate')
+          bar.style.width = '100%'
+        } else if (data.phase === 'install') {
+          // 后面的事在安装程序自己的窗口里，进度条留着只会让人以为还在下载
+          wrap.hidden = true
+          bar.style.width = ''
+        }
+      })
       events.addEventListener('bye', () => launcherExited())
       // 页面也可能是自己发现后端没了（推送没赶上、或页面刚打开），用断线兜底
       events.onerror = async () => {
@@ -1739,15 +1765,41 @@
           '更新启动器',
           (event) => {
             const btn = event.currentTarget
+            const wrap = document.getElementById('askProgress')
+            const bar = document.getElementById('askProgressBar')
+
+            // 第二步：用户点了确认才走。安装程序是独立窗口，起没起来要回个话
+            btn.onclick = async () => {
+              btn.disabled = true
+              btn.textContent = '正在打开…'
+              try {
+                await post('/api/self/install')
+                btn.disabled = false
+                btn.textContent = '再打开一次'
+                askNoteEl.textContent = '安装程序已经打开，按它的提示下一步就行。它要是问是否关闭正在运行的 DSH-X，选「是」。'
+              } catch (error) {
+                btn.disabled = false
+                btn.textContent = '打开安装程序'
+                askNoteEl.textContent = `打不开安装程序：${error.message}`
+              }
+            }
+
+            // 第一步：下载。期间按钮是禁用的，进度由服务端的 selfUpdate 事件推过来
             btn.disabled = true
             btn.textContent = '正在下载…'
-            askNoteEl.textContent = '正在下载新版本，下完会自动静默安装并重启启动器，你不用管。'
+            askNoteEl.textContent = '正在下载新版本…'
             askNoteEl.hidden = false
-            // 服务端下完就交给更新助手并退出；这里走到失败只有一种情况：下载那步没成
-            post('/api/self/update').catch((error) => {
+            wrap.hidden = false
+            wrap.classList.remove('indeterminate')
+            post('/api/self/download').then(() => {
+              btn.disabled = false
+              btn.textContent = '打开安装程序'
+              askNoteEl.textContent = '新版本已下载好。点右侧按钮打开安装程序，按提示完成安装。'
+            }).catch((error) => {
               btn.disabled = false
               btn.textContent = '更新启动器'
-              askNoteEl.textContent = `自动更新失败：${error.message}。可以从 GitHub 的发布页手动下载安装包。`
+              askNoteEl.textContent = `下载失败：${error.message}。可以从 GitHub 的发布页手动下载安装包。`
+              wrap.hidden = true
             })
           },
         ))

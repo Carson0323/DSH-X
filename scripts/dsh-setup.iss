@@ -1,6 +1,6 @@
 #define MyAppName "DSH-X"
 #ifndef MyAppVersion
-#define MyAppVersion "0.1.10"
+#define MyAppVersion "0.1.11"
 #endif
 #define MyAppPublisher "yyh"
 #define MyAppExeName "DSH.exe"
@@ -51,6 +51,11 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Default.isl,ChineseSimplified
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Description: "安装完成后启动"; Flags: nowait postinstall skipifsilent shellexec runasoriginaluser
+; 完成页的「删除安装包」勾选框，默认选中：多数人装完不会留着安装包，留下来只是占地方。
+; 不想删的在完成页取消勾选即可（静默安装时整条跳过，不会不打招呼地删文件）。
+; 之所以拿 ping 拖三秒：此刻 setup.exe 自己还在运行，直接 del 会被拒绝；cmd 独立于安装
+; 程序存活，等它退出之后再删就干净了。
+Filename: "{cmd}"; Parameters: "/c ping -n 3 127.0.0.1 > nul & del /f /q ""{srcexe}"""; Description: "删除安装包"; Flags: runhidden nowait postinstall skipifsilent
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\node_modules"

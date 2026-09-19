@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -255,16 +255,43 @@ function emit(event, data) {
 }
 
 /**
- * 全自动更新：把新安装包下载到临时目录，交给一个脱离的 cmd 助手，等本进程退出后静默
- * 安装，再把新版拉起来。
+ * 启动器自更新：先把新安装包下载到临时目录（带进度），用户确认后再把它用普通界面打开。
  *
- * 为什么要这个助手：安装包要替换的文件正被我们（DSH.exe、node、WebView2）占着，不退出
- * 装不了；而静默模式下安装包自己不会启动程序（[Run] 那条带着 skipifsilent）。助手用
- * cmd 而不是 node，是因为 node.exe 就在安装目录里，会被安装包自己替换掉。
+ * 分工是刻意的：下载这段我们能显示进度（安装包自己的下载页在启动器里看不到），
+ * 交互这段交给安装程序——它能显示自己在装什么、能在需要替换正在运行的文件时提示关闭，
+ * 这些都是我们替它做只会做砸的部分。
  */
-async function startSelfUpdate() {
+// 下载好的安装包，等用户点「打开安装程序」再动手
+let stagedUpdate = null
+
+/**
+ * 收拾上一轮更新在临时目录里留下的安装包。
+ *
+ * 装完之后我们已经被安装程序关掉了，没机会删；用户在完成页也可能干脆不勾「删除安装包」。
+ * 所以留给下一次启动：只认自己下载时用的 `DSH-X-update-` 前缀，别处的安装包一律不碰。
+ */
+function cleanStaleUpdates() {
+  let entries = []
+  try {
+    entries = readdirSync(tmpdir())
+  } catch {
+    return
+  }
+  for (const name of entries) {
+    if (!/^DSH-X-update-.+\.exe$/i.test(name)) continue
+    try {
+      unlinkSync(join(tmpdir(), name))
+      pushLog(`已清理上次的安装包 ${name}`)
+    } catch {
+      // 还被安装程序占着就随它去，下次启动再说
+    }
+  }
+}
+
+/** 第一步：下载 + 校验。进度通过 selfUpdate 事件推给页面。 */
+async function downloadSelfUpdate() {
   const info = await checkSelfUpdate()
-  const target = join(tmpdir(), `DSH-Setup-${info.latest || 'latest'}.exe`)
+  const target = join(tmpdir(), `DSH-X-update-${info.latest || 'latest'}.exe`)
   pushLog(`下载更新${info.latest ? ` ${info.latest}` : ''}…`)
 
   const res = await fetch(info.url, { redirect: 'follow', signal: AbortSignal.timeout(10 * 60 * 1000) })
@@ -276,6 +303,7 @@ async function startSelfUpdate() {
   for await (const chunk of res.body) {
     chunks.push(chunk)
     got += chunk.length
+    emit('selfUpdate', { phase: 'download', done: got, total })
     if (total) {
       const pct = Math.floor((got / total) * 100)
       if (pct >= shown + 10) {
@@ -290,36 +318,34 @@ async function startSelfUpdate() {
     throw new Error(`下载到的不是安装包（${buffer.length} 字节）`)
   }
   await writeFile(target, buffer)
-  pushLog(`更新已就绪：${target}（${(buffer.length / 1048576).toFixed(1)} MB）`)
-
-  // 助手是一条 PowerShell 命令：等本进程退出 → 静默安装 → 拉起新版。
-  //
-  // 为什么不是 .cmd，两个坑都实测过，值得记下来：
-  // 一是 cmd 按 GBK 读脚本文件，里面只要有中文就会把命令行解析乱（实测把 set 那行吃掉
-  // 半截，报 'RGET_PID' 不是内部或外部命令）；二是 tasklist 的输出是本地化的，按列位置
-  // 判断进程在不在靠不住——判断失败会让这个等待变成死循环，更新就永远卡住不动。
-  // Get-Process 两样都不怕，而且一整条命令不需要落盘。
-  const quote = (path) => `'${path.replace(/'/g, "''")}'`
-  const ps = [
-    `$ErrorActionPreference='Stop'`,
-    `while (Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 400 }`,
-    `Start-Process -FilePath ${quote(target)} -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait`,
-    `Start-Process -FilePath ${quote(join(ROOT, 'DSH.exe'))}`,
-  ].join('; ')
-
-  // 助手的输出（含安装程序的）留一份，装失败了有据可查
-  const logFd = openSync(join(LOG_DIR, 'update.log'), 'a')
-  try {
-    spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], {
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      windowsHide: true,
-    }).unref()
-  } finally {
-    closeSync(logFd)
-  }
-  pushLog('已交给更新助手，退出后自动安装并重启')
+  stagedUpdate = { latest: info.latest, file: target }
+  pushLog(`更新已就绪：${target}（${(buffer.length / 1048576).toFixed(1)} MB），等用户确认后安装`)
+  emit('selfUpdate', { phase: 'ready', latest: info.latest })
   return { latest: info.latest, file: target }
+}
+
+/**
+ * 第二步：用户确认之后走到这里——把安装程序用它自己的界面拉起来。
+ *
+ * 这里原本是「脱离的 PowerShell 助手：等我们退出 → 静默安装 → 拉起新版」。两个问题：
+ *
+ * 一是让子进程活过我们退出这件事在 Windows 上不可靠。实测 `spawn(detached) + unref()`
+ * 之后退出，子进程没跑起来（日志是空的、安装目录没动、进程也没回来），而这类失败不留
+ * 任何痕迹，用户只看到「点了没反应」。
+ *
+ * 二是静默安装本身没有可看的东西：装的时候屏幕上什么都没有，装没装成也不知道。
+ *
+ * 所以改成最直白的一步——把安装程序按它自己的界面打开。看得见、点得到；而「正在运行的
+ * 启动器占着要替换的文件」这件事，安装程序自己会处理（[Setup] 里的 CloseApplications=yes
+ * 会提示关闭正在运行的程序），不需要我们抢在它前面退出，也就不存在谁先死的问题。
+ */
+async function installSelfUpdate() {
+  const staged = stagedUpdate
+  if (!staged || !existsSync(staged.file)) throw new Error('更新包还没下载好')
+  spawn(staged.file, [], { detached: true, stdio: 'ignore', windowsHide: false }).unref()
+  pushLog(`已打开安装程序：${staged.file}`)
+  emit('selfUpdate', { phase: 'install', latest: staged.latest })
+  return { latest: staged.latest, file: staged.file }
 }
 
 /**
@@ -1461,15 +1487,25 @@ async function handleApi(req, res, url) {
     send(res, 200, await skipPendingUpdate(body))
     return
   }
-  if (req.method === 'POST' && url.pathname === '/api/self/update') {
-    // 先回页面，再收尾退出：安装包已经下好、助手也起来了，把位子让给它
+  if (req.method === 'POST' && url.pathname === '/api/self/download') {
+    // 第一步：下载。进度走 selfUpdate 事件，页面显示进度条
     try {
-      const result = await startSelfUpdate()
-      send(res, 200, result)
-      shutdown().finally(() => process.exit(0))
+      send(res, 200, await downloadSelfUpdate())
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      pushLog(`自动更新失败：${message}`)
+      pushLog(`更新下载失败：${message}`)
+      send(res, 500, { error: message })
+    }
+    return
+  }
+  if (req.method === 'POST' && url.pathname === '/api/self/install') {
+    // 第二步：用户点确认之后才走这里。先回页面，再收尾退出，把位子让给助手
+    try {
+      // 不在这里退出：安装程序会提示关闭正在运行的启动器，它自己会处理
+      send(res, 200, await installSelfUpdate())
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      pushLog(`更新安装失败：${message}`)
       send(res, 500, { error: message })
     }
     return
@@ -1551,6 +1587,7 @@ export async function startServer() {
   DATA = resolveDataDir()
   CONFIG = join(DATA, 'config.json')
   await mkdir(DATA, { recursive: true })
+  cleanStaleUpdates()
   // 默认 16KB 的请求头上限会被浏览器里堆积的 cookie 顶爆（HTTP 431），放宽到 128KB
   server = createServer({ maxHeaderSize: 128 * 1024 }, async (req, res) => {
     try {
