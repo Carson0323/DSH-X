@@ -1,9 +1,9 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile, spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { delimiter, dirname, join } from 'node:path'
+import { basename, delimiter, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { cmpVer, installSpec, listPackage, parseVer } from './registry.js'
 import pkg from './package.json' with { type: 'json' }
@@ -324,27 +324,83 @@ async function downloadSelfUpdate() {
   return { latest: info.latest, file: target }
 }
 
+/** 等某个进程出现在任务列表里（用于确认安装程序真的起来了）。 */
+function waitForProcess(name, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  return new Promise((resolve) => {
+    const tick = () => {
+      // tasklist 的提示语是本地化的，所以只认输出里有没有这个进程名
+      const out = spawnSync('tasklist', ['/FI', `IMAGENAME eq ${name}`, '/NH'], { encoding: 'utf8' })
+      if ((out.stdout || '').toLowerCase().includes(name.toLowerCase())) return resolve(true)
+      if (Date.now() > deadline) return resolve(false)
+      setTimeout(tick, 300)
+    }
+    tick()
+  })
+}
+
 /**
- * 第二步：用户确认之后走到这里——把安装程序用它自己的界面拉起来。
+ * 打开安装程序（静默）然后把自己关掉——等价于 VS Code 的「重启并更新」。
  *
- * 这里原本是「脱离的 PowerShell 助手：等我们退出 → 静默安装 → 拉起新版」。两个问题：
+ * 为什么要 `/silent`：不静默时，只要还有程序占着要替换的文件，安装程序的 Restart Manager
+ * 那一步就会停在「以下应用程序正在使用将由安装程序更新的文件」这一页，让用户在「自动关闭
+ * 应用程序」和「不要关闭应用程序」之间选一下。`CloseApplications=force` 去不掉这一页——
+ * 官方文档写得很清楚，force 只决定关的时候用不用强制，问还是要问。而静默模式下文档明确写着
+ * Setup「always close and restart such applications」，也就是直接关、不问。
  *
- * 一是让子进程活过我们退出这件事在 Windows 上不可靠。实测 `spawn(detached) + unref()`
- * 之后退出，子进程没跑起来（日志是空的、安装目录没动、进程也没回来），而这类失败不留
- * 任何痕迹，用户只看到「点了没反应」。
+ * 退场之前会确认安装程序真的起来了：Start-Process 这种走 ShellExecute 的启动方式拿不到子
+ * 进程句柄，起没起来只能靠任务列表确认；确认不到就留在原地报错，总比关掉自己又没打开安装程
+ * 序、把用户晾在那儿强。
  *
- * 二是静默安装本身没有可看的东西：装的时候屏幕上什么都没有，装没装成也不知道。
- *
- * 所以改成最直白的一步——把安装程序按它自己的界面打开。看得见、点得到；而「正在运行的
- * 启动器占着要替换的文件」这件事，安装程序自己会处理（[Setup] 里的 CloseApplications=yes
- * 会提示关闭正在运行的程序），不需要我们抢在它前面退出，也就不存在谁先死的问题。
+ * 我们自己也退，是为了让 dsh 走正常收尾（而不是被 Restart Manager 直接结束），顺带把浏览器
+ * 里开着的页面收掉。
  */
 async function installSelfUpdate() {
   const staged = stagedUpdate
   if (!staged || !existsSync(staged.file)) throw new Error('更新包还没下载好')
-  spawn(staged.file, [], { detached: true, stdio: 'ignore', windowsHide: false }).unref()
-  pushLog(`已打开安装程序：${staged.file}`)
+  const name = basename(staged.file)
+  const logFile = join(tmpdir(), 'DSH-X-install.log')
+  // 上次的日志留着没用，先清掉，免得 Inno 另起一个带编号的文件名
+  try {
+    unlinkSync(logFile)
+  } catch {
+    // 没有就算了
+  }
+  const quote = (path) => `'${path.replace(/'/g, "''")}'`
+
+  // 这里**不能**加 `detached: true`。Node 在 Windows 上会给 detached 的子进程设
+  // DETACHED_PROCESS，而 powershell.exe 是控制台程序：带着这个标记它起不来，而且不报错、
+  // 不留日志，进程直接从世界上消失——当初那个「等启动器退出再静默安装」的助手就是这么没的
+  // （日志空的、安装目录没动），当时误判成「子进程活不过父进程」，其实是这一步。
+  // 也不需要它：Start-Process 走的是 ShellExecute，安装程序由 PowerShell 创建，而 PowerShell
+  // 随即退出，所以安装程序本来就不隶属于我们，我们退出影响不到它。
+  //
+  // -WindowStyle Hidden 藏的只是 PowerShell 自己的控制台，安装程序自己的进度窗口照常显示。
+  spawn(
+    'powershell',
+    [
+      '-NoProfile',
+      '-WindowStyle',
+      'Hidden',
+      '-Command',
+      `Start-Process -FilePath ${quote(staged.file)} -ArgumentList '/silent /log="${logFile}"'`,
+    ],
+    {
+      stdio: 'ignore',
+      windowsHide: true,
+      // 跟 VS Code 学的一招：压掉继承来的兼容性设置，免得启动器被提权运行时
+      // 安装程序跟着提权——我们装的是用户目录，提权反而会装到别处去
+      env: { ...process.env, __COMPAT_LAYER: 'RunAsInvoker' },
+    },
+  ).unref()
+
+  if (!(await waitForProcess(name, 8000))) throw new Error('安装程序没能启动')
+  pushLog(`安装程序已启动：${name}`)
   emit('selfUpdate', { phase: 'install', latest: staged.latest })
+  // 先让响应发出去，再停 dsh、退出——此时安装目录里已经没有属于我们的进程占着文件了
+  setTimeout(() => {
+    shutdown().finally(() => process.exit(0))
+  }, 900)
   return { latest: staged.latest, file: staged.file }
 }
 
@@ -979,20 +1035,62 @@ async function repairProfileDeps(version, error) {
 // 会把失败信息刷满终端，而失败原因并不会自己消失——留到下次启动再试。
 let marketSeedFailed = false
 
+/**
+ * dsh 实际加载哪些插件，看的是 profile 清单里的 dsh.profile.bundles。
+ * 「依赖里有 + 目录里有」不等于它会跑起来——装上了却没启用时，插件市场就是不会出现。
+ */
+async function registeredBundles() {
+  try {
+    const manifest = JSON.parse(await readFile(profileManifest(), 'utf8'))
+    const list = manifest?.dsh?.profile?.bundles
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+/** 把包装进 dsh.profile.bundles——dsh 插件管理器点「启用」写的就是这里。 */
+async function registerBundle(name) {
+  const file = profileManifest()
+  let manifest
+  try {
+    manifest = JSON.parse(await readFile(file, 'utf8'))
+  } catch {
+    // 清单还没有或读不动：这一步只是补启用，不在这里造文件
+    return false
+  }
+  if (!manifest || typeof manifest !== 'object') return false
+  const dsh = typeof manifest.dsh === 'object' && manifest.dsh ? manifest.dsh : (manifest.dsh = {})
+  const profile = typeof dsh.profile === 'object' && dsh.profile ? dsh.profile : (dsh.profile = {})
+  const bundles = Array.isArray(profile.bundles) ? profile.bundles : (profile.bundles = [])
+  if (bundles.includes(name)) return false
+  bundles.push(name)
+  await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`)
+  return true
+}
+
 async function seedMarket(version) {
   const settings = await loadSettings()
   if (settings.seedMarket === false) return
   if (marketSeedFailed) return
   const plugins = await installedPlugins()
-  // 清单里写着不代表真的装好了：pnpm 中途失败、或被杀毒软件拦下的时候，会在清单里留下
-  // 名字却只留一个空壳目录（正是 "unknown error, open ...dshmarket\package.json" 那种）。
-  // 只看清单的话以后每次启动都会跳过预装，那个坏目录就永远修不回来。
-  if (plugins.includes(MARKET_PKG)
-    && existsSync(join(profileDir(), 'node_modules', MARKET_PKG, 'package.json'))) {
-    return
-  }
+  // 三条都成立才算装好了，少一条都要修：
+  // 1) 清单里有——pnpm 中途失败或被杀毒软件拦下时，清单里留了名字却只有一个空壳目录
+  //    （正是 "unknown error, open ...dshmarket\package.json" 那种）；
+  // 2) 文件真的在——只看清单会把空壳当成装好了，那个坏目录就永远修不回来；
+  // 3) 在 dsh.profile.bundles 里——少了这条，包是装上了但 dsh 不会加载它，市场不出现，
+  //    而前两条都成立，于是预装再也不会重试（这个缺口让市场一直缺席）。
+  const listed = plugins.includes(MARKET_PKG)
+  const onDisk = existsSync(join(profileDir(), 'node_modules', MARKET_PKG, 'package.json'))
+  const bundled = (await registeredBundles()).includes(MARKET_PKG)
+  if (listed && onDisk && bundled) return
   try {
-    await addPlugin(version, MARKET_PKG)
+    // 只有「包不在」才真的需要跑 pnpm；包在、只是没启用的话补一句启用就够了，
+    // 不必每次都去跑一遍注定失败的安装
+    if (!listed || !onDisk) await addPlugin(version, MARKET_PKG)
+    if (await registerBundle(MARKET_PKG)) {
+      pushLog(`已把 ${MARKET_PKG} 加入 profile 的 bundle 列表，重启后市场就会出现`)
+    }
   } catch (error) {
     marketSeedFailed = true
     pushLog(`预装 dshmarket 失败: ${error instanceof Error ? error.message : error}（本次运行不再重试，可在插件页手动安装）`)

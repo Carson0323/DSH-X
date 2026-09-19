@@ -1768,34 +1768,31 @@
             const wrap = document.getElementById('askProgress')
             const bar = document.getElementById('askProgressBar')
 
-            // 第二步：用户点了确认才走。安装程序是独立窗口，起没起来要回个话
-            btn.onclick = async () => {
+            // 安装。下载完自动走这一步，静默安装，不需要用户再点任何东西
+            const openInstaller = async () => {
               btn.disabled = true
-              btn.textContent = '正在打开…'
+              btn.textContent = '正在安装…'
+              askNoteEl.textContent = '下载完成，正在安装新版本…'
               try {
                 await post('/api/self/install')
-                btn.disabled = false
-                btn.textContent = '再打开一次'
-                askNoteEl.textContent = '安装程序已经打开，按它的提示下一步就行。它要是问是否关闭正在运行的 DSH-X，选「是」。'
+                askNoteEl.textContent = '新版本正在安装，启动器这就关闭，装完会自动打开新版。'
               } catch (error) {
                 btn.disabled = false
-                btn.textContent = '打开安装程序'
-                askNoteEl.textContent = `打不开安装程序：${error.message}`
+                btn.textContent = '重试'
+                askNoteEl.textContent = `安装没能开始：${error.message}`
               }
             }
+            btn.onclick = openInstaller
 
-            // 第一步：下载。期间按钮是禁用的，进度由服务端的 selfUpdate 事件推过来
+            // 下载。期间按钮是禁用的，进度由服务端的 selfUpdate 事件推过来；
+            // 下完不用再点一次，直接接上打开安装程序那一步
             btn.disabled = true
             btn.textContent = '正在下载…'
             askNoteEl.textContent = '正在下载新版本…'
             askNoteEl.hidden = false
             wrap.hidden = false
             wrap.classList.remove('indeterminate')
-            post('/api/self/download').then(() => {
-              btn.disabled = false
-              btn.textContent = '打开安装程序'
-              askNoteEl.textContent = '新版本已下载好。点右侧按钮打开安装程序，按提示完成安装。'
-            }).catch((error) => {
+            post('/api/self/download').then(openInstaller).catch((error) => {
               btn.disabled = false
               btn.textContent = '更新启动器'
               askNoteEl.textContent = `下载失败：${error.message}。可以从 GitHub 的发布页手动下载安装包。`
