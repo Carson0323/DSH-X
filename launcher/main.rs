@@ -365,6 +365,21 @@ fn main() {
                 };
                 let _ = ipc_proxy.send_event(event);
             })
+            // 外部链接（Star、运行地址、更新日志）一律交给系统浏览器。wry 在没设这个
+            // 处理器时会把 target="_blank" 直接取消，点了就像没反应。
+            .with_new_window_req_handler(|url, _features| {
+                open_in_browser(&url);
+                wry::NewWindowResponse::Deny
+            })
+            // 就地导航（页面里 location.href 那种兜底）会把窗口导走，连自定义标题栏
+            // 一起弄丢，所以只放行管理页自己，其余同样丢给浏览器。
+            .with_navigation_handler(|url| {
+                if url == "about:blank" || url.starts_with(MANAGER_URL) {
+                    return true;
+                }
+                open_in_browser(&url);
+                false
+            })
             .build(window)
         {
             Ok(webview) => Some(webview),
