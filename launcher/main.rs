@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use tao::dpi::{LogicalSize, PhysicalPosition};
 use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoopBuilder};
+use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder};
 use tao::window::WindowBuilder;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -36,6 +36,9 @@ const WINDOW_W: f64 = 1100.0;
 const WINDOW_H: f64 = 760.0;
 const WINDOW_MIN_W: f64 = 720.0;
 const WINDOW_MIN_H: f64 = 520.0;
+/// 启动失败那张错误页的窗口尺寸（逻辑像素）
+const ERROR_W: f64 = 560.0;
+const ERROR_H: f64 = 300.0;
 /// node 往 stdout 打这一行，就表示它要我们把窗口叫到前面（见 start.js 的 requestShow）。
 const SHOW_SIGNAL: &str = "__DSH_SHOW__";
 /// 菜单项 id
@@ -54,6 +57,8 @@ enum UserEvent {
     ToggleMaximize,
     Hide,
     Drag,
+    /// 错误页上的「关闭」
+    Quit,
     /// 轮询到的最新托盘状态
     Tray(TrayState),
 }
@@ -149,11 +154,143 @@ fn build_tray(root: &Path) -> Option<Tray> {
     })
 }
 
-fn alert(message: &str) {
-    let _ = Command::new("mshta")
-        .arg(format!("javascript:alert('{message}');close()"))
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn();
+/// 启动失败时显示的页面。刻意不用系统弹窗（mshta/javascript:alert 那种）——它长得和
+/// 窗口里的其它东西没关系，是这套界面里唯一格格不入的一块。
+const ERROR_PAGE: &str = r#"<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>DSH-X</title><style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; align-items: center; justify-content: center;
+         background: #15171c; color: #e7e9ee;
+         font: 14px/1.6 "Microsoft YaHei UI", "Segoe UI", sans-serif;
+         -webkit-user-select: none; user-select: none; }
+  .card { width: 100%; padding: 26px 28px; background: #1c1f26; border-top: 1px solid #2a2e38; }
+  .head { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #f2777a;
+         box-shadow: 0 0 0 4px rgba(242, 119, 122, .16); }
+  h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  p { margin: 0 0 14px; color: #b9bec9; }
+  pre { margin: 0 0 20px; padding: 10px 12px; background: #14161b; border: 1px solid #262a33;
+        border-radius: 8px; max-height: 150px; overflow: auto; color: #9aa1ad;
+        font: 12px/1.5 Consolas, "Courier New", monospace; white-space: pre-wrap;
+        word-break: break-all; -webkit-user-select: text; user-select: text; }
+  button { border: 0; border-radius: 8px; padding: 9px 20px; background: #3b6cff; color: #fff;
+           font: inherit; font-size: 13px; cursor: pointer; }
+  button:hover { background: #4a78ff; }
+</style></head>
+<body>
+  <div class="card">
+    <div class="head" id="drag"><span class="dot"></span><h1>__TITLE__</h1></div>
+    <p>__MESSAGE__</p>
+    <pre>__DETAIL__</pre>
+    <button onclick="window.ipc.postMessage('quit')">关闭</button>
+  </div>
+  <script>
+    window.ipc.postMessage('loaded:' + document.body.innerText.length + ':' + document.title);
+    const drag = document.getElementById('drag');
+    drag.addEventListener('mousedown', (e) => {
+      if (e.target.tagName !== 'BUTTON') window.ipc.postMessage('drag');
+    });
+  </script>
+</body></html>
+"#;
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+fn error_page(title: &str, message: &str, detail: &str) -> String {
+    ERROR_PAGE
+        .replace("__TITLE__", &escape_html(title))
+        .replace("__MESSAGE__", &escape_html(message))
+        .replace("__DETAIL__", &escape_html(detail))
+}
+
+/// 启动失败就把这句话显示在我们自己的窗口里，然后守着它，直到用户点关闭。
+/// 不返回：事件循环跑在这个函数里（一个进程只能有一个事件循环，所以不能另起一个）。
+fn run_error_window(event_loop: EventLoop<UserEvent>, root: &Path, title: &str, message: &str, detail: &str) -> ! {
+    let centered = event_loop.primary_monitor().map(|monitor| {
+        let screen = monitor.size();
+        let area = LogicalSize::new(ERROR_W, ERROR_H).to_physical::<u32>(monitor.scale_factor());
+        PhysicalPosition::new(
+            monitor.position().x + (screen.width as i32 - area.width as i32) / 2,
+            monitor.position().y + (screen.height as i32 - area.height as i32) / 2,
+        )
+    });
+    let mut window_builder = WindowBuilder::new()
+        .with_title("DSH-X")
+        .with_window_icon(load_window_icon(root))
+        .with_decorations(false)
+        .with_inner_size(LogicalSize::new(ERROR_W, ERROR_H));
+    if let Some(position) = centered {
+        window_builder = window_builder.with_position(position);
+    }
+    let Ok(window) = window_builder.build(&event_loop) else {
+        // 连这个窗口都建不出来（WebView2 缺失等）：没有能显示我们界面的地方了，
+        // 只能交给系统浏览器，至少管理页本身还能用
+        open_in_browser(MANAGER_URL);
+        std::process::exit(1);
+    };
+
+    let proxy = event_loop.create_proxy();
+    let mut context = WebContext::new(None);
+    // 走和主窗口同一条路：先 about:blank，再 load_url。直接 with_html 在这里渲染不出来
+    // （实测窗口是空白的），而这条路径是主窗口天天在跑的。
+    let webview = WebViewBuilder::new_with_web_context(&mut context)
+        .with_url("about:blank")
+        .with_ipc_handler(move |request| match request.body().as_str() {
+            "quit" => {
+                let _ = proxy.send_event(UserEvent::Quit);
+            }
+            "drag" => {
+                let _ = proxy.send_event(UserEvent::Drag);
+            }
+            _ => {}
+        })
+        .build(&window)
+        .ok();
+    let Some(webview) = webview else {
+        // 连错误页都建不出来（WebView2 运行时缺失等）：留一份日志说明原因，别留一个白窗口
+        let _ = std::fs::write(
+            std::env::temp_dir().join("dsh-x-window-error.log"),
+            format!("{title}: {message}\n{detail}\n"),
+        );
+        std::process::exit(1);
+    };
+    let page = error_page(title, message, detail);
+
+    // 导航必须等事件循环跑起来之后再做：在 run 之前调 load_url/load_html，WebView2 收下了
+    // 却不会真正加载，窗口就一直是一片空白（实测）。
+    let mut loaded = false;
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+        if !loaded {
+            if let Event::NewEvents(tao::event::StartCause::Init) = event {
+                loaded = true;
+                if let Err(error) = webview.load_html(&page) {
+                    let _ = std::fs::write(
+                        std::env::temp_dir().join("dsh-x-window-error.log"),
+                        format!("错误页加载失败：{error}\n"),
+                    );
+                }
+            }
+        }
+        match event {
+            Event::UserEvent(UserEvent::Quit) => *control_flow = ControlFlow::Exit,
+            // 无边框窗口，拖动只能自己来（和主窗口一样由页面发信号）
+            Event::UserEvent(UserEvent::Drag) => {
+                let _ = window.drag_window();
+            }
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::WindowEvent { event: WindowEvent::Destroyed, .. } => {
+                *control_flow = ControlFlow::Exit;
+            }
+            _ => {}
+        }
+    })
 }
 
 fn manager_is_up() -> bool {
@@ -223,10 +360,6 @@ fn main() {
     let root = exe.parent().expect("install dir").to_path_buf();
     let node = root.join("node").join("node.exe");
     let script = root.join("start.js");
-    if !node.exists() || !script.exists() {
-        alert("DSH 启动失败：缺少 node/node.exe 或 start.js");
-        std::process::exit(1);
-    }
 
     // 已经有实例在跑就别再走后面那一套了。否则会先建出一个窗口、再拉一次 node 和
     // WebView2，等发现端口被占才收摊——用户看到的就是一个多余的窗口闪一下。
@@ -262,13 +395,27 @@ fn main() {
     let event_loop = builder.build();
     let proxy = event_loop.create_proxy();
 
+    // 事件循环要先建出来：启动失败的话，我们要用自己的窗口把原因说清楚，而不是弹系统对话框
+    if !node.exists() || !script.exists() {
+        run_error_window(
+            event_loop,
+            &root,
+            "启动器文件不完整",
+            "缺少 node/node.exe 或 start.js，多半是安装没完成、或者被杀毒软件清理掉了。",
+            "重新安装一次 DSH-X 即可。",
+        );
+    }
+
     // 先把 node 拉起来：它要加载模块、起 http 服务，这段时间正好和下面 WebView2 的初始化重叠
     let mut child = match spawn_node(true) {
         Ok(child) => child,
-        Err(error) => {
-            alert(&format!("DSH 启动失败：{error}"));
-            std::process::exit(1);
-        }
+        Err(error) => run_error_window(
+            event_loop,
+            &root,
+            "无法启动 dsh 服务进程",
+            "启动器没能把 node 拉起来，dsh 因此无法运行。",
+            &error.to_string(),
+        ),
     };
 
     let node_out = child.stdout.take();
@@ -344,7 +491,9 @@ fn main() {
     {
         Ok(window) => Some(window),
         Err(error) => {
-            alert(&format!("DSH-X 窗口创建失败，已改用浏览器打开：{error}"));
+            // 建不出窗口，就没有能显示我们自己界面的地方了，只能退回系统浏览器——
+            // 至少管理页本身还能用，托盘也照常工作
+            eprintln!("窗口创建失败，已改用浏览器打开：{error}");
             open_in_browser(MANAGER_URL);
             None
         }
@@ -384,7 +533,7 @@ fn main() {
         {
             Ok(webview) => Some(webview),
             Err(error) => {
-                alert(&format!("DSH-X 窗口创建失败，已改用浏览器打开：{error}"));
+                eprintln!("窗口创建失败，已改用浏览器打开：{error}");
                 open_in_browser(MANAGER_URL);
                 None
             }
