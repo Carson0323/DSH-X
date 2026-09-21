@@ -515,7 +515,8 @@ async function emitState() {
 /** dsh 子进程与 AI 修复命令共用的环境变量（AI 靠这些变量拼出正确的 dsh 命令）。 */
 function dshEnv(version) {
   const home = homeDir()
-  return {
+  const workerCompat = existsSync(WORKER_COMPAT)
+  const env = {
     ...process.env,
     DSH_HOME: home,
     DSH_NODE: process.execPath,
@@ -523,16 +524,21 @@ function dshEnv(version) {
     DSH_VERSION: version,
     DSH_PROFILE: PROFILE_NAME,
     // 浏览器里堆积的 cookie 会顶爆默认 16KB 的请求头上限（HTTP 431），一并放宽；
-    // --require 用于把会话事件兼容补丁带进 dsh 起的 worker 线程
+    // --require 用于把会话事件兼容补丁带进 dsh 起的 worker 线程。这里只放文件名，
+    // 目录靠下面的 NODE_PATH 传（原因见 WORKER_COMPAT）。
     NODE_OPTIONS: [
       process.env.NODE_OPTIONS,
       '--max-http-header-size=131072',
-      // NODE_OPTIONS 用空格分词、引号会被剥掉，Windows 反斜杠会被当转义吃没，统一用正斜杠
-      existsSync(WORKER_COMPAT) ? `--require ${WORKER_COMPAT.replace(/\\/g, '/')}` : '',
+      workerCompat ? `--require ${basename(WORKER_COMPAT)}` : '',
     ].filter(Boolean).join(' '),
     npm_config_ignore_workspace_root_check: 'true',
     PATH: withBundledRuntime(process.env.PATH || ''),
   }
+  if (workerCompat) {
+    // NODE_PATH 是分号分隔的，条目本身带空格没关系，正好兜住带空格的安装路径
+    env.NODE_PATH = [WORKER_COMPAT_DIR, process.env.NODE_PATH].filter(Boolean).join(delimiter)
+  }
+  return env
 }
 
 /**
@@ -565,8 +571,17 @@ const HOOKS = [
   join(ROOT, 'compat', 'register.mjs'),
 ].filter((file) => existsSync(file))
 
-/** worker 线程用 --require 注入（execArgv 被清空，只有 NODE_OPTIONS 能传进去）。 */
+/**
+ * worker 线程用 --require 注入（execArgv 被清空，只有 NODE_OPTIONS 能传进去）。
+ *
+ * 注意 NODE_OPTIONS 是按空格分词的，写绝对路径时只要安装目录带空格（装到
+ * `D:\Program Files\DSH` 这种），就会被切成半截路径，node 拿它去 require 直接
+ * 起不来——报 `Cannot find module 'D:/Program'`。引号、反斜杠转义都救不了，所以
+ * 这里改成把目录放进 NODE_PATH、NODE_OPTIONS 里只写不带空格的裸文件名；
+ * NODE_PATH 是分号分隔的，条目带空格没问题。
+ */
 const WORKER_COMPAT = join(ROOT, 'compat', 'worker-events.cjs')
+const WORKER_COMPAT_DIR = dirname(WORKER_COMPAT)
 
 function spawnDsh(version, extra) {
   const home = homeDir()
