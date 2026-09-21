@@ -201,14 +201,28 @@ function safeVersion(version) {
 const KEEP_VERSIONS = 2
 
 /**
+ * 装完新版后该留哪几个：刚装的那个 + 版本号最高的，正在跑的一定留。
+ * `versions[0]` 是 install() 刚插到最前面的那个，**不是**「版本号最高的那个」——
+ * 用户可以挑一个旧版本装。只按位置取前两个的话，装旧版就会把最新版删掉。
+ */
+export function versionsToKeep(versions, currentVersion, limit = KEEP_VERSIONS) {
+  if (!versions.length) return new Set()
+  const [installed, ...rest] = versions
+  const ranked = [...rest].sort((a, b) =>
+    cmpVer(parseVer(b) ?? parseVer('0'), parseVer(a) ?? parseVer('0')))
+  const keep = new Set([installed, ...ranked.slice(0, Math.max(0, limit - 1))])
+  if (currentVersion) keep.add(currentVersion)
+  return keep
+}
+
+/**
  * 装完新版后清理旧版本：只留最新的和上一个，正在运行的除外。
  * @returns 被清理掉的版本号
  */
 async function pruneVersions(config) {
   const versions = listedVersions(config)
   if (versions.length <= KEEP_VERSIONS) return []
-  const keep = new Set(versions.slice(0, KEEP_VERSIONS))
-  if (current?.version) keep.add(current.version)
+  const keep = versionsToKeep(versions, current?.version)
   const removed = []
   for (const version of versions) {
     if (keep.has(version)) continue
