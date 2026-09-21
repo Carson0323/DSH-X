@@ -12,6 +12,7 @@
   "scripts": {
     "start": "node start.js",
     "server": "node server.js",
+    "test": "node --test",
     "dist": "node scripts/pack.mjs"
   },
   "author": "yyh",
