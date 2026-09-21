@@ -361,12 +361,20 @@ fn wait_for_manager() -> Option<u16> {
 
 
 
-/// 拉不起窗口时退回老做法：让系统浏览器打开管理页。
+/// 用系统默认程序打开链接。
+///
+/// 别用 `cmd /c start`：cmd 会把 URL 再解析一遍，里面的 `&` 就是语句分隔符，
+/// 页面上任何一个链接（插件页面、更新日志）被构造成 `http://127.0.0.1:1/?&calc`
+/// 就成了任意命令执行。这里直接调 ShellExecuteW——`start` 内部走的也是它，
+/// 参数按 argv 原样传，中间没有 shell。
 fn open_in_browser(url: &str) {
-    let _ = Command::new("cmd")
-        .args(["/c", "start", "", url])
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn();
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let verb: Vec<u16> = "open\0".encode_utf16().collect();
+    let file: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL);
+    }
 }
 
 /// 极简 HTTP GET，只用来问本机管理服务一个短路径；读完整响应取正文即可。

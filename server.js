@@ -1492,15 +1492,62 @@ export function setHost(next) {
   host = { ...host, ...next }
 }
 
-function openLocalUrl(target) {
-  if (typeof target !== 'string' || !/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:[/?#]|$)/i.test(target)) {
+/** 允许当作"本机"的主机名——打开本机页面、判断请求来源都用它。 */
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
+
+/** 严格解析成本机 http(s) 地址；不是就抛错（前缀正则挡不住 `/?&calc` 这种尾巴）。 */
+function assertLocalUrl(target) {
+  let parsed
+  try {
+    parsed = new URL(String(target))
+  } catch {
     throw new Error('只能打开本机地址')
   }
+  if (!/^https?:$/.test(parsed.protocol) || !LOCAL_HOSTS.has(parsed.hostname.toLowerCase())) {
+    throw new Error('只能打开本机地址')
+  }
+  return parsed.href
+}
+
+/**
+ * 交给系统默认程序打开。
+ *
+ * Windows 走 `cmd /c start`，而 cmd 会把这行**再解析一遍**：URL 里的 `&` 是语句
+ * 分隔符、`|<>^()%"` 各有含义，于是 `http://127.0.0.1:1/?&calc` 能直接跑起任意命令
+ * （Node 只给含空格的参数加引号，而 URL 里通常没有空格）。所以这里只放行 cmd 会
+ * 原样看待的字符——够用（本机地址就是 `http://127.0.0.1:端口/路径?k=v`），
+ * 其余一律拒绝，比在字符串上做转义可靠。
+ */
+const CMD_SAFE_URL = /^[A-Za-z0-9\-._~:/?#\[\]@$'*,;=+]+$/
+
+function openExternal(target) {
+  const url = String(target)
   if (process.platform === 'win32') {
-    execFile('cmd', ['/c', 'start', '', target], { windowsHide: true })
+    if (!CMD_SAFE_URL.test(url)) throw new Error('地址里含不能安全打开的字符')
+    execFile('cmd', ['/c', 'start', '', url], { windowsHide: true })
     return
   }
-  execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [target])
+  execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [url])
+}
+
+function openLocalUrl(target) {
+  openExternal(assertLocalUrl(target))
+}
+
+/**
+ * 请求是不是来自本机。带 Origin 的只有浏览器：别的网页往 127.0.0.1 发跨站 POST 时
+ * 会带上自己的 Origin（file:// 页面则是 `null`），而这个管理页没有任何鉴权，不挡的话
+ * 任意网页都能让启动器装插件、起进程、开链接。托盘 / curl / 本机脚本不带 Origin。
+ */
+function sameSiteRequest(req) {
+  const origin = req.headers.origin
+  if (!origin) return true
+  try {
+    const parsed = new URL(origin)
+    return LOCAL_HOSTS.has(parsed.hostname.toLowerCase()) && (!parsed.port || Number(parsed.port) === PORT)
+  } catch {
+    return false
+  }
 }
 
 export { snapshot, stop }
@@ -1571,6 +1618,11 @@ async function handleApi(req, res, url) {
   // 身份标记：端口被占用时我们要能分辨那是自己的另一个实例还是别人的程序
   if (url.pathname === '/api/ping') {
     send(res, 200, { app: 'dsh-x', version: APP_VERSION, port: PORT })
+    return
+  }
+  // 改状态的请求只认本机来源（浏览器会带 Origin，本机程序不会）
+  if (req.method !== 'GET' && !sameSiteRequest(req)) {
+    send(res, 403, { error: '跨站请求被拒绝' })
     return
   }
   if (req.method === 'GET' && url.pathname === '/api/remote') {

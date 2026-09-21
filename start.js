@@ -28,8 +28,15 @@ function log(...args) {
   console.error(...args)
 }
 
+/** cmd 会二次解析命令行，URL 里出现它的元字符就不安全（原因见 server.js 的 openExternal）。 */
+const CMD_SAFE_URL = /^[A-Za-z0-9\-._~:/?#\[\]@$'*,;=+]+$/
+
 function openPage(target = MANAGER_URL) {
   if (process.platform === 'win32') {
+    if (!CMD_SAFE_URL.test(target)) {
+      log(`地址含不能安全打开的字符，已跳过：${target}`)
+      return
+    }
     execFile('cmd', ['/c', 'start', '', target], { windowsHide: true })
     return
   }
