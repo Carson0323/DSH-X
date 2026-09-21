@@ -16,6 +16,7 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use tao::dpi::{LogicalSize, PhysicalPosition};
@@ -27,8 +28,8 @@ use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIc
 use wry::{WebContext, WebViewBuilder};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-const MANAGER_URL: &str = "http://127.0.0.1:3780/";
-const MANAGER_ADDR: &str = "127.0.0.1:3780";
+/// 管理页默认端口；设置页里可以改（存在 %APPDATA%\DSH\settings.json）。
+const DEFAULT_PORT: u16 = 3780;
 /// 等管理服务起来的时限；超了也照常开窗口，让页面自己显示连接失败。
 const PORT_WAIT: Duration = Duration::from_secs(25);
 /// 首次出现的窗口尺寸（逻辑像素）
@@ -229,7 +230,7 @@ fn run_error_window(event_loop: EventLoop<UserEvent>, root: &Path, title: &str, 
     let Ok(window) = window_builder.build(&event_loop) else {
         // 连这个窗口都建不出来（WebView2 缺失等）：没有能显示我们界面的地方了，
         // 只能交给系统浏览器，至少管理页本身还能用
-        open_in_browser(MANAGER_URL);
+        open_in_browser(&manager_url());
         std::process::exit(1);
     };
 
@@ -293,8 +294,32 @@ fn run_error_window(event_loop: EventLoop<UserEvent>, root: &Path, title: &str, 
     })
 }
 
+/// 管理页端口：settings.json 里的 port（设置页可改），读不到/不合法就用默认值。
+static MANAGER_PORT: OnceLock<u16> = OnceLock::new();
+
+fn manager_port() -> u16 {
+    *MANAGER_PORT.get_or_init(|| {
+        let text = std::env::var_os("APPDATA")
+            .map(|dir| Path::new(&dir).join("DSH").join("settings.json"))
+            .and_then(|file| std::fs::read_to_string(file).ok());
+        text.and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|json| json.get("port").and_then(|value| value.as_u64()))
+            .filter(|port| (1..=65535).contains(port))
+            .map(|port| port as u16)
+            .unwrap_or(DEFAULT_PORT)
+    })
+}
+
+fn manager_url() -> String {
+    format!("http://127.0.0.1:{}/", manager_port())
+}
+
+fn manager_addr() -> String {
+    format!("127.0.0.1:{}", manager_port())
+}
+
 fn manager_is_up() -> bool {
-    MANAGER_ADDR
+    manager_addr()
         .parse()
         .ok()
         .and_then(|addr: std::net::SocketAddr| TcpStream::connect_timeout(&addr, Duration::from_millis(300)).ok())
@@ -365,7 +390,7 @@ fn main() {
     // WebView2，等发现端口被占才收摊——用户看到的就是一个多余的窗口闪一下。
     // 直接让那个实例把窗口叫出来就完事（它的 node 收到 /api/wake 会回信号给我们）。
     if manager_is_up() {
-        let _ = http_post(MANAGER_ADDR, "/api/wake");
+        let _ = http_post(&manager_addr(), "/api/wake");
         std::process::exit(0);
     }
 
@@ -445,7 +470,7 @@ fn main() {
     {
         let proxy = proxy.clone();
         thread::spawn(move || loop {
-            let state = http_get(MANAGER_ADDR, "/api/tray")
+            let state = http_get(&manager_addr(), "/api/tray")
                 .map(|text| parse_tray_state(&text))
                 .unwrap_or_default();
             if proxy.send_event(UserEvent::Tray(state)).is_err() {
@@ -494,7 +519,7 @@ fn main() {
             // 建不出窗口，就没有能显示我们自己界面的地方了，只能退回系统浏览器——
             // 至少管理页本身还能用，托盘也照常工作
             eprintln!("窗口创建失败，已改用浏览器打开：{error}");
-            open_in_browser(MANAGER_URL);
+            open_in_browser(&manager_url());
             None
         }
     };
@@ -523,7 +548,7 @@ fn main() {
             // 就地导航（页面里 location.href 那种兜底）会把窗口导走，连自定义标题栏
             // 一起弄丢，所以只放行管理页自己，其余同样丢给浏览器。
             .with_navigation_handler(|url| {
-                if url == "about:blank" || url.starts_with(MANAGER_URL) {
+                if url == "about:blank" || url.starts_with(&manager_url()) {
                     return true;
                 }
                 open_in_browser(&url);
@@ -534,7 +559,7 @@ fn main() {
             Ok(webview) => Some(webview),
             Err(error) => {
                 eprintln!("窗口创建失败，已改用浏览器打开：{error}");
-                open_in_browser(MANAGER_URL);
+                open_in_browser(&manager_url());
                 None
             }
         },
@@ -551,7 +576,7 @@ fn main() {
     // 那个接口内部要发网络请求，一旦超过读超时就会退化成不带 window=1 的地址，
     // 页面因此丢掉自定义标题栏和窗口按钮。更新询问交给页面自己去问 /api/pending。
     if let Some(webview) = &webview {
-        let _ = webview.load_url(&format!("{MANAGER_URL}?window=1"));
+        let _ = webview.load_url(&format!("{}?window=1", manager_url()));
     }
 
     // 托盘建在主线程：它的消息要靠下面这个事件循环的消息泵派发
@@ -575,7 +600,7 @@ fn main() {
                         window.set_visible(true);
                         window.set_focus();
                     }
-                    None => open_in_browser(MANAGER_URL),
+                    None => open_in_browser(&manager_url()),
                 }
             }
         }
@@ -589,10 +614,10 @@ fn main() {
                 }
                 ITEM_TOGGLE => {
                     let path = if state.live() { "/api/stop" } else { "/api/launch" };
-                    let _ = http_post(MANAGER_ADDR, path);
+                    let _ = http_post(&manager_addr(), path);
                 }
                 ITEM_RESTART => {
-                    let _ = http_post(MANAGER_ADDR, "/api/restart");
+                    let _ = http_post(&manager_addr(), "/api/restart");
                 }
                 ITEM_MANAGER => match &window {
                     Some(window) => {
@@ -601,11 +626,11 @@ fn main() {
                         window.set_visible(true);
                         window.set_focus();
                     }
-                    None => open_in_browser(MANAGER_URL),
+                    None => open_in_browser(&manager_url()),
                 },
                 ITEM_QUIT => {
                     // 让 node 自己收尾（停掉 dsh、通知开着的页面），它一退我们跟着收摊
-                    let _ = http_post(MANAGER_ADDR, "/api/quit");
+                    let _ = http_post(&manager_addr(), "/api/quit");
                 }
                 _ => {}
             }

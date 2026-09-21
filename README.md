@@ -47,7 +47,7 @@ DeepSeek Harness 轻量 Windows 启动器。选一个版本，在系统浏览器
 
 ## 使用
 
-Windows 安装 [DSH-Setup.exe](https://github.com/yyh-001/DSH-X/releases/latest) 后，从桌面打开 **DSH-X**。启动器管理页和 DSH 官方原版 Web 界面都会使用系统默认浏览器打开；管理页地址为 `http://127.0.0.1:3780/`。
+Windows 安装 [DSH-Setup.exe](https://github.com/yyh-001/DSH-X/releases/latest) 后，从桌面打开 **DSH-X**。启动器管理页和 DSH 官方原版 Web 界面都会使用系统默认浏览器打开；管理页地址默认 `http://127.0.0.1:3780/`（设置页可改端口，改完重启启动器生效）。
 
 ## 开发
 

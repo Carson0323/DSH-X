@@ -16,6 +16,7 @@ strip = true
 
 [dependencies]
 image = { version = "0.25.10", default-features = false, features = ["ico", "png"] }
+serde_json = "1"
 tao = "0.37.0"
 tray-icon = "0.25.1"
 wry = "0.57.0"

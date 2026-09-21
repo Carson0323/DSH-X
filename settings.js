@@ -12,14 +12,38 @@ const SETTINGS_FILE = join(SETTINGS_DIR, 'settings.json')
 const RUN_REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 const RUN_NAME = 'DSH'
 
+/** 管理页端口，默认这个；被别的程序占了可以在设置页改。 */
+export const DEFAULT_PORT = 3780
+
 export const DEFAULTS = {
   dataDir: '',
+  port: DEFAULT_PORT,
   autoStart: false,
   seedMarket: true,
   // 启动失败时按错误点名自动禁用问题插件（兼容模式），再重试
   autoDisablePlugins: true,
   // 用户在更新弹窗里点过「不更新」的版本 { dsh?, self? }：同一个版本不再提示
   skippedUpdate: {},
+}
+
+/** 端口校验：1-65535 的整数，别的都当成没填（回默认端口）。 */
+export function safePort(value) {
+  const port = Number(value)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('端口要填 1-65535 之间的整数')
+  }
+  return port
+}
+
+/** 管理页端口：环境变量 PORT（开发和测试用）优先，其次 settings.json。 */
+export function resolvePort() {
+  const fromEnv = Number(process.env.PORT || 0)
+  if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv
+  try {
+    return safePort(loadSettingsSync().port)
+  } catch {
+    return DEFAULT_PORT
+  }
 }
 
 function hasInstall(dir) {
@@ -76,6 +100,13 @@ export async function saveSettings(patch) {
   const current = await loadSettings()
   const merged = { ...current, ...patch }
   if (merged.dataDir) merged.dataDir = safeDataDir(merged.dataDir)
+  // 历史文件里的脏端口值顺手修回默认；显式改端口时才把错误抛给调用方
+  try {
+    merged.port = safePort(merged.port)
+  } catch {
+    merged.port = DEFAULT_PORT
+  }
+  if ('port' in patch) merged.port = safePort(patch.port)
   merged.autoStart = Boolean(merged.autoStart)
   merged.seedMarket = merged.seedMarket !== false
   merged.autoDisablePlugins = merged.autoDisablePlugins !== false

@@ -8,9 +8,11 @@ import {
   shutdown,
   startServer,
 } from './server.js'
+import { resolvePort } from './settings.js'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
-const MANAGER_URL = 'http://127.0.0.1:3780/'
+const PORT = resolvePort()
+const MANAGER_URL = `http://127.0.0.1:${PORT}/`
 // 由 DSH.exe 拉起时它设这个变量：管理页装进它自己的窗口，托盘也归它，
 // 这里就只剩服务本身，不用再往系统浏览器里开页面。
 const APP_WINDOW = process.env.DSH_APP_WINDOW === '1'
@@ -72,7 +74,7 @@ async function main() {
     await startServer()
   } catch (error) {
     if (error && error.code === 'EADDRINUSE') {
-      log('端口 3780 已被占用，通知已在运行的实例把窗口叫出来')
+      log(`端口 ${PORT} 已被占用，通知已在运行的实例把窗口叫出来`)
       await wakeExisting()
       await showManager()
       if (!APP_WINDOW) {

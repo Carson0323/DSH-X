@@ -18,10 +18,13 @@ import {
 } from './plugins.js'
 import {
   autoStartEnabled,
+  DEFAULT_PORT,
   ensureSettings,
   loadSettings,
   resolveDataDir,
+  resolvePort,
   safeDataDir,
+  safePort,
   saveSettings,
   setAutoStart,
 } from './settings.js'
@@ -35,7 +38,8 @@ const MARKET_PKG = 'dshmarket'
 const APP_VERSION = String(pkg.version || '0.0.0')
 const APP_REPO = 'yyh-001/DSH-X'
 const APP_SETUP = 'DSH-Setup.exe'
-const PORT = Number(process.env.PORT || 3780)
+// 管理页端口：环境变量 PORT（开发和测试用）优先，其余看设置；启动时 startServer() 再定最终值
+let PORT = resolvePort() || DEFAULT_PORT
 const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]*$/
 const SPEC_RE = /^(?:@[a-z0-9._~-]+\/)?[a-z0-9._~-]+(?:@[a-z0-9._~+-]+)?$/i
 const GITHUB_SPEC_RE = /^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:#[\w./-]+)?$/
@@ -471,6 +475,10 @@ async function publicSettings() {
   return {
     dataDir: DATA,
     dshHome: homeDir(),
+    // port 是配置值（重启后生效），listenPort 是当前真正在监听的端口
+    port: stored.port ?? DEFAULT_PORT,
+    listenPort: PORT,
+    portDefault: DEFAULT_PORT,
     autoStart: await autoStartEnabled(),
     seedMarket: stored.seedMarket !== false,
     autoDisablePlugins: stored.autoDisablePlugins !== false,
@@ -487,6 +495,7 @@ async function saveManagerSettings(body) {
   }
   const stored = await saveSettings({
     dataDir: DATA,
+    ...('port' in body ? { port: safePort(body.port) } : {}),
     autoStart: Boolean(body.autoStart),
     seedMarket: body.seedMarket !== false,
     autoDisablePlugins: body.autoDisablePlugins !== false,
@@ -524,9 +533,12 @@ function dshEnv(version) {
     DSH_VERSION: version,
     DSH_PROFILE: PROFILE_NAME,
     // 浏览器里堆积的 cookie 会顶爆默认 16KB 的请求头上限（HTTP 431），一并放宽；
+    // app 用系统证书库（Windows 证书存储），否则挂了代理 / TUN（mihomo 之类）做
+    // TLS 中间人时，DeepSeek 的请求会以 transport failed 收场；
     // --require 用于把会话事件兼容补丁带进 dsh 起的 worker 线程。这里只放文件名，
     // 目录靠下面的 NODE_PATH 传（原因见 WORKER_COMPAT）。
     NODE_OPTIONS: [
+      '--use-system-ca',
       process.env.NODE_OPTIONS,
       '--max-http-header-size=131072',
       workerCompat ? `--require ${basename(WORKER_COMPAT)}` : '',
@@ -1697,6 +1709,8 @@ function isTextFile(file) {
 export async function startServer() {
   if (server) return Promise.resolve(`http://127.0.0.1:${PORT}`)
   await ensureSettings()
+  // 设置页改过端口的话，这里拿到的就是新值（PORT 环境变量仍然优先，测试用）
+  if (!process.env.PORT) PORT = resolvePort()
   DATA = resolveDataDir()
   CONFIG = join(DATA, 'config.json')
   await mkdir(DATA, { recursive: true })
