@@ -1728,6 +1728,48 @@ function isTextFile(file) {
   return /\.(html|css|js|svg|json|txt|map)$/i.test(file)
 }
 
+/** 回环地址的几种写法，管理页和 DSH.exe 都只会用这些。 */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
+
+/** `host[:port]` 是不是本机、且就是当前监听端口。空的当放行（见 localRequestOk）。 */
+function authorityIsLocal(authority, port = PORT) {
+  if (!authority) return true
+  let parsed
+  try {
+    parsed = new URL(`http://${authority}`)
+  } catch {
+    return false
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  if (!LOOPBACK_HOSTS.has(host)) return false
+  return (parsed.port === '' ? 80 : Number(parsed.port)) === port
+}
+
+/**
+ * 只接受本机请求。管理器的接口没有任何凭据，而浏览器对任何网站的 POST
+ * （表单和 fetch 一样）都会带上 Origin，所以 Origin 不是本机就直接拒掉，
+ * 挡住网页驱动 /api/self/install、/api/uninstall、/api/quit 这类接口。
+ * 端口也比——别的网页服务（比如 dsh 自己的页面）跑在另一个回环端口上，
+ * 不该因此拿到驱动启动器的权限。
+ * Host 一并校验，挡 DNS rebinding：把域名解析到 127.0.0.1 的页面同样
+ * 是攻击者的源，只看 Origin 会漏掉它。
+ * DSH.exe 的原生调用不带 Origin、Host 是本机，照常放行；连 Host 都没有的
+ * 客户端（手写 socket、部分本地工具）也放行，浏览器不会不发 Host。
+ */
+export function localRequestOk(req, port = PORT) {
+  const origin = req.headers.origin
+  if (origin) {
+    let parsed
+    try {
+      parsed = new URL(origin)
+    } catch {
+      return false
+    }
+    if (parsed.protocol !== 'http:' || !authorityIsLocal(parsed.host, port)) return false
+  }
+  return authorityIsLocal(req.headers.host, port)
+}
+
 export async function startServer() {
   if (server) return Promise.resolve(`http://127.0.0.1:${PORT}`)
   await ensureSettings()
@@ -1740,6 +1782,11 @@ export async function startServer() {
   // 默认 16KB 的请求头上限会被浏览器里堆积的 cookie 顶爆（HTTP 431），放宽到 128KB
   const handler = async (req, res) => {
     try {
+      if (!localRequestOk(req)) {
+        pushLog(`拒绝非本机请求 ${req.method} ${req.url}（Origin: ${req.headers.origin || '无'}，Host: ${req.headers.host || '无'}）`)
+        send(res, 403, { error: '只接受本机请求' })
+        return
+      }
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${PORT}`)
       if (url.pathname.startsWith('/api/')) {
         await handleApi(req, res, url)
