@@ -23,8 +23,10 @@ import {
   loadSettings,
   resolveDataDir,
   resolvePort,
+  resolveProfile,
   safeDataDir,
   safePort,
+  safeProfile,
   saveSettings,
   setAutoStart,
 } from './settings.js'
@@ -62,7 +64,8 @@ const SPEC_RE = /^(?:@[a-z0-9._~-]+\/)?[a-z0-9._~-]+(?:@[a-z0-9._~+-]+)?$/i
 const GITHUB_SPEC_RE = /^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:#[\w./-]+)?$/
 const READY_RE = /dsh web:\s+(https?:\/\/[^\s]+)/
 const START_TIMEOUT_MS = 120_000
-const PROFILE_NAME = 'web'
+// 启动 profile：设置页可改，startServer() 里按设置定值
+let PROFILE_NAME = resolveProfile()
 const LOG_DIR = process.env.APPDATA ? join(process.env.APPDATA, 'DSH') : join(ROOT, 'data')
 const LOG_FILE = join(LOG_DIR, 'manager.log')
 const LOG_MAX_BYTES = 5 * 1024 * 1024
@@ -500,6 +503,7 @@ async function publicSettings() {
     seedMarket: stored.seedMarket !== false,
     autoDisablePlugins: stored.autoDisablePlugins !== false,
     profile: PROFILE_NAME,
+    profiles: listProfiles(),
   }
 }
 
@@ -513,6 +517,7 @@ async function saveManagerSettings(body) {
   const stored = await saveSettings({
     dataDir: DATA,
     ...('port' in body ? { port: safePort(body.port) } : {}),
+    ...('profile' in body ? { profile: safeProfile(body.profile) } : {}),
     autoStart: Boolean(body.autoStart),
     seedMarket: body.seedMarket !== false,
     autoDisablePlugins: body.autoDisablePlugins !== false,
@@ -521,6 +526,11 @@ async function saveManagerSettings(body) {
     await setAutoStart(stored.autoStart)
   } catch (error) {
     pushLog(`开机自启未写入: ${error instanceof Error ? error.message : error}`)
+  }
+  // profile 立即生效：插件页、启动参数、npmrc 都读这个变量（已经在跑的 dsh 不受影响）
+  if (stored.profile && stored.profile !== PROFILE_NAME) {
+    pushLog(`启动 profile 改为 ${stored.profile}`)
+    PROFILE_NAME = stored.profile
   }
   if (stored.seedMarket) {
     const versions = listedVersions(await loadConfig())
@@ -625,7 +635,7 @@ function spawnDsh(version, extra) {
 }
 
 async function ensureProfileNpmrc() {
-  const dir = join(homeDir(), 'profiles', 'web')
+  const dir = join(homeDir(), 'profiles', PROFILE_NAME)
   await mkdir(dir, { recursive: true })
   const file = join(dir, '.npmrc')
   let text = ''
@@ -1492,6 +1502,27 @@ export function setHost(next) {
   host = { ...host, ...next }
 }
 
+/**
+ * dsh 自带的 profile 模板名（见 @deepseek-ai/dsh-app-boot 的 PROFILE_TEMPLATES）：
+ * 这些名字首次使用时 dsh 会自动初始化。其余名字必须先在磁盘上存在（目录里有
+ * package.json），否则 dsh 会直接拒绝启动——所以设置页只让人从可用列表里挑。
+ */
+const TEMPLATE_PROFILES = ['web', 'headless', 'acp', 'sdk', 'sdk-minimal']
+
+/** 可切换的 profile：磁盘上已初始化的 + dsh 自带模板名 + 当前值。 */
+function listProfiles() {
+  const names = new Set(TEMPLATE_PROFILES)
+  const root = join(homeDir(), 'profiles')
+  try {
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === 'node_modules') continue
+      if (existsSync(join(root, entry.name, 'package.json'))) names.add(entry.name)
+    }
+  } catch { /* 还没有 profiles 目录 */ }
+  if (PROFILE_NAME) names.add(PROFILE_NAME)
+  return [...names].sort()
+}
+
 /** 允许当作"本机"的主机名——打开本机页面、判断请求来源都用它。 */
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
 
@@ -1548,6 +1579,15 @@ function sameSiteRequest(req) {
   } catch {
     return false
   }
+}
+
+/** Host 头是不是我们自己（DNS rebinding 的请求里写的是攻击者的域名）。 */
+function isLocalHostHeader(host) {
+  if (!host) return true
+  const match = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(String(host).trim().toLowerCase())
+  if (!match) return false
+  if (!LOCAL_HOSTS.has(match[1])) return false
+  return !match[2] || Number(match[2]) === PORT
 }
 
 export { snapshot, stop }
@@ -1783,8 +1823,9 @@ function isTextFile(file) {
 export async function startServer() {
   if (server) return Promise.resolve(`http://127.0.0.1:${PORT}`)
   await ensureSettings()
-  // 设置页改过端口的话，这里拿到的就是新值（PORT 环境变量仍然优先，测试用）
+  // 设置页改过端口 / profile 的话，这里拿到的就是新值（PORT 环境变量仍然优先，测试用）
   if (!process.env.PORT) PORT = resolvePort()
+  PROFILE_NAME = resolveProfile()
   DATA = resolveDataDir()
   CONFIG = join(DATA, 'config.json')
   await mkdir(DATA, { recursive: true })
@@ -1792,6 +1833,12 @@ export async function startServer() {
   // 默认 16KB 的请求头上限会被浏览器里堆积的 cookie 顶爆（HTTP 431），放宽到 128KB
   const handler = async (req, res) => {
     try {
+      // Host 必须是本机：恶意域名解析到 127.0.0.1（DNS rebinding）时浏览器带的是那个
+      // 域名，浏览器会把它当同源，GET 接口（含 dsh 的 token、日志）就能被读走
+      if (!isLocalHostHeader(req.headers.host)) {
+        send(res, 403, 'forbidden', 'text/plain; charset=utf-8')
+        return
+      }
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${PORT}`)
       if (url.pathname.startsWith('/api/')) {
         await handleApi(req, res, url)

@@ -241,7 +241,7 @@
       .controls { margin-left: auto; }
     }
     label { display: block; color: var(--muted); font-size: 12px; letter-spacing: 0.08em; margin-bottom: 8px; }
-    input[type=text], input[type=number] {
+    input[type=text], input[type=number], select {
       width: 100%;
       appearance: none;
       background: #fff;
@@ -251,7 +251,12 @@
       padding: 12px 14px;
       font: inherit;
     }
-    input[type=text]:focus, input[type=number]:focus { outline: 1px solid var(--accent); }
+    input[type=text]:focus, input[type=number]:focus, select:focus { outline: 1px solid var(--accent); }
+    select {
+      width: 148px;
+      flex: 0 0 auto;
+      cursor: pointer;
+    }
     /* 设置页的行：标题在左、控件在右，跟开关同一套节奏 */
     .field {
       display: flex;
@@ -837,6 +842,7 @@
         <label class="toggle"><span>兼容模式</span><input id="autoDisable" type="checkbox" /></label>
         <details class="advanced">
           <summary>高级设置</summary>
+          <label class="field"><span>启动 profile</span><select id="profile"></select></label>
           <label class="field"><span>管理页端口</span><input id="port" type="number" min="1" max="65535" step="1" inputmode="numeric" /></label>
           <p class="hint" id="portHint"></p>
         </details>
@@ -1893,12 +1899,18 @@
     const autoStartEl = document.getElementById('autoStart')
     const seedMarketEl = document.getElementById('seedMarket')
     const autoDisableEl = document.getElementById('autoDisable')
+    const profileEl = document.getElementById('profile')
     const portEl = document.getElementById('port')
     const portHint = document.getElementById('portHint')
     const settingsHint = document.getElementById('settingsHint')
     const saveSettingsEl = document.getElementById('saveSettings')
 
     function fillSettings(data) {
+      if ('profile' in data) {
+        const list = Array.isArray(data.profiles) && data.profiles.length ? data.profiles : [String(data.profile ?? 'web')]
+        profileEl.innerHTML = list.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')
+        profileEl.value = String(data.profile ?? '')
+      }
       if ('port' in data) {
         portEl.value = String(data.port ?? '')
         portEl.placeholder = String(data.portDefault ?? 3780)
@@ -1926,6 +1938,7 @@
       settingsHint.textContent = '正在保存…'
       try {
         const data = await post('/api/settings', {
+          profile: profileEl.value.trim(),
           port: Number(portEl.value),
           autoStart: autoStartEl.checked,
           seedMarket: seedMarketEl.checked,
