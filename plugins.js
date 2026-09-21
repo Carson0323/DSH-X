@@ -71,9 +71,16 @@ export function readPatchState(patchPath) {
   for (let index = 0; index < lines.length; index += 1) {
     const match = /^- id:\s*['"]?([A-Za-z0-9_.-]+)['"]?\s*$/.exec(lines[index] ?? '')
     if (!match) continue
-    const next = lines[index + 1] ?? ''
-    if (/^ {2}disabled:\s*true\s*$/.test(next)) disables.push(match[1])
-    else if (/^ {2}disabled:\s*false\s*$/.test(next)) forced.push(match[1])
+    // 一条 patch 行是 YAML 映射，键顺序不固定：dsh 自己就会把 disabled 加到已有行
+    // 的其它键后面（dsh-plugin-manager 用 setIn 写在原行上），所以整行扫。
+    // 只认正好两个缩进的键——再深一级是 config 里的同名字段，不是这一行的开关。
+    for (let cursor = index + 1; cursor < lines.length && !/^- /.test(lines[cursor]); cursor += 1) {
+      const flag = /^ {2}disabled:\s*(true|false)\s*$/.exec(lines[cursor])
+      if (!flag) continue
+      if (flag[1] === 'true') disables.push(match[1])
+      else forced.push(match[1])
+      break
+    }
   }
   return { disables, forced, text }
 }
@@ -197,9 +204,26 @@ function appendDisableBlock(text, rowId) {
   return { ok: true, text: `${head}${block(rowId)}` }
 }
 
+/**
+ * 删掉某一行里的 `disabled: true`（键在行里的位置不限）。
+ * 同一行的其它覆盖键（name/config/…）留着，整行只剩它就整行删掉。
+ */
 function removeDisableBlock(text, rowId) {
-  const re = new RegExp(`^- id: ['"]?${escapeRegExp(rowId)}['"]?\\r?\\n {2}disabled: true\\r?\\n`, 'mu')
-  return text.replace(re, '')
+  const idRe = new RegExp(`^- id:\\s*['"]?${escapeRegExp(rowId)}['"]?\\s*$`)
+  const lines = String(text ?? '').split('\n')
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!idRe.test(lines[index])) continue
+    let end = index + 1
+    while (end < lines.length && !/^- /.test(lines[end])) end += 1
+    const row = lines.slice(index, end)
+    const at = row.findIndex((line, pos) => pos > 0 && /^ {2}disabled:\s*true\s*$/.test(line))
+    if (at < 0) return text
+    const kept = row.filter((_, pos) => pos !== at)
+    const stillHasKeys = kept.slice(1).some((line) => line.trim() !== '')
+    lines.splice(index, end - index, ...(stillHasKeys ? kept : []))
+    return lines.join('\n')
+  }
+  return text
 }
 
 /** 补丁层空了就把模板的 `[]` 占位恢复回来（否则 dsh 拒绝启动整个 profile）。 */
