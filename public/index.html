@@ -1216,11 +1216,31 @@
       return visibleVersionList(allVersionList())
     }
 
-    /** 版本比较，规则与 registry.js 的 cmpVer 一致：正式版 > 预发布版，预发布段按字符串比。 */
+    /**
+     * 版本比较，规则与 registry.js 的 cmpVer 一致：正式版 > 预发布版，
+     * 预发布段按 semver 逐段比（数字段按数值，`alpha.10` > `alpha.2`）。
+     */
     function compareVersion(a, b) {
       const split = (value) => {
-        const m = String(value ?? '').trim().match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?$/)
+        // 与 registry.js 的 parseVer 同一套语法：构建元数据（+build）不参与比较
+        const m = String(value ?? '').trim().match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/)
         return m ? [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0), m[4] || ''] : null
+      }
+      const comparePre = (left, right) => {
+        const l = left.split('.')
+        const r = right.split('.')
+        const len = Math.max(l.length, r.length)
+        for (let i = 0; i < len; i += 1) {
+          if (l[i] === undefined) return -1
+          if (r[i] === undefined) return 1
+          if (l[i] === r[i]) continue
+          const leftNumeric = /^\d+$/.test(l[i])
+          const rightNumeric = /^\d+$/.test(r[i])
+          if (leftNumeric && rightNumeric) return Number(l[i]) < Number(r[i]) ? -1 : 1
+          if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1
+          return l[i] < r[i] ? -1 : 1
+        }
+        return 0
       }
       const left = split(a)
       const right = split(b)
@@ -1231,7 +1251,7 @@
       if (left[3] === right[3]) return 0
       if (!left[3]) return 1
       if (!right[3]) return -1
-      return left[3] > right[3] ? 1 : -1
+      return comparePre(left[3], right[3])
     }
 
     /**
