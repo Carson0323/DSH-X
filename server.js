@@ -40,6 +40,23 @@ const APP_REPO = 'yyh-001/DSH-X'
 const APP_SETUP = 'DSH-Setup.exe'
 // 管理页端口：环境变量 PORT（开发和测试用）优先，其余看设置；启动时 startServer() 再定最终值
 let PORT = resolvePort() || DEFAULT_PORT
+/** 配置的端口被别的程序占用时，往后最多试这么多个端口。 */
+const PORT_SCAN = 20
+
+/** 探端口上是不是我们自己的管理页——用 /api/ping 的身份标记区分「自己的实例」和「别人的程序」。 */
+async function probeManager(port) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/ping`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(800),
+    })
+    if (!res.ok) return false
+    const data = await res.json()
+    return data?.app === 'dsh-x'
+  } catch {
+    return false
+  }
+}
 const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]*$/
 const SPEC_RE = /^(?:@[a-z0-9._~-]+\/)?[a-z0-9._~-]+(?:@[a-z0-9._~+-]+)?$/i
 const GITHUB_SPEC_RE = /^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:#[\w./-]+)?$/
@@ -1551,6 +1568,11 @@ function send(res, status, body, type = 'application/json; charset=utf-8') {
 }
 
 async function handleApi(req, res, url) {
+  // 身份标记：端口被占用时我们要能分辨那是自己的另一个实例还是别人的程序
+  if (url.pathname === '/api/ping') {
+    send(res, 200, { app: 'dsh-x', version: APP_VERSION, port: PORT })
+    return
+  }
   if (req.method === 'GET' && url.pathname === '/api/remote') {
     send(res, 200, await fetchRemote())
     return
@@ -1716,7 +1738,7 @@ export async function startServer() {
   await mkdir(DATA, { recursive: true })
   cleanStaleUpdates()
   // 默认 16KB 的请求头上限会被浏览器里堆积的 cookie 顶爆（HTTP 431），放宽到 128KB
-  server = createServer({ maxHeaderSize: 128 * 1024 }, async (req, res) => {
+  const handler = async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${PORT}`)
       if (url.pathname.startsWith('/api/')) {
@@ -1742,21 +1764,52 @@ export async function startServer() {
       pushLog(`错误: ${message}`)
       send(res, 500, { error: message })
     }
-  })
-  return new Promise((resolve, reject) => {
-    server.listen(PORT, '127.0.0.1', () => {
-      pushLog(`DSH 管理器 http://127.0.0.1:${PORT}`)
-      pushLog(`版本目录 ${DATA}`)
-      pushLog(`DSH_HOME ${homeDir()}`)
-      const system = detectSystemDsh()
-      if (system) pushLog(`发现系统已安装 ${system.version}`)
-      console.log(`dsh-versions: http://127.0.0.1:${PORT}`)
-      console.log(`dsh-versions data: ${DATA}`)
-      console.log(`dsh-versions home: ${homeDir()}`)
-      resolve(`http://127.0.0.1:${PORT}`)
-    })
-    server.on('error', reject)
-  })
+  }
+
+  // 端口顺延：配置的端口被**别的程序**占了就往后试（最多 PORT_SCAN 个），被自己的
+  // 另一个实例占着则抛 EALREADY，让 start.js 去把它唤醒——双击图标不该起出第二个管理器。
+  const preferred = PORT
+  let lastError = null
+  for (let offset = 0; offset < PORT_SCAN; offset += 1) {
+    const candidate = preferred + offset
+    if (candidate > 65535) break
+    const attempt = createServer({ maxHeaderSize: 128 * 1024 }, handler)
+    try {
+      await new Promise((resolve, reject) => {
+        attempt.once('error', reject)
+        attempt.listen(candidate, '127.0.0.1', () => {
+          attempt.off('error', reject)
+          resolve()
+        })
+      })
+    } catch (error) {
+      attempt.close()
+      if (error?.code !== 'EADDRINUSE') throw error
+      lastError = error
+      if (await probeManager(candidate)) {
+        const busy = new Error(`管理页已经在 ${candidate} 端口上跑着`)
+        busy.code = 'EALREADY'
+        busy.port = candidate
+        throw busy
+      }
+      pushLog(`端口 ${candidate} 被别的程序占用，试下一个`)
+      continue
+    }
+    attempt.on('error', (error) => pushLog(`管理服务出错: ${error?.message || error}`))
+    server = attempt
+    PORT = candidate
+    if (offset > 0) pushLog(`管理页改用端口 ${PORT}（${preferred} 起被占用）`)
+    pushLog(`DSH 管理器 http://127.0.0.1:${PORT}`)
+    pushLog(`版本目录 ${DATA}`)
+    pushLog(`DSH_HOME ${homeDir()}`)
+    const system = detectSystemDsh()
+    if (system) pushLog(`发现系统已安装 ${system.version}`)
+    console.log(`dsh-versions: http://127.0.0.1:${PORT}`)
+    console.log(`dsh-versions data: ${DATA}`)
+    console.log(`dsh-versions home: ${homeDir()}`)
+    return `http://127.0.0.1:${PORT}`
+  }
+  throw lastError ?? new Error('没有可用端口')
 }
 
 export async function stopAll() {
