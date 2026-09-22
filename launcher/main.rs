@@ -77,6 +77,8 @@ struct TrayState {
     status: String,
     url: String,
     installed: bool,
+    /// 界面语言（zh / en），由管理页的 /api/tray 带过来
+    lang: String,
 }
 
 impl TrayState {
@@ -95,6 +97,7 @@ fn parse_tray_state(text: &str) -> TrayState {
             "status" => state.status = value.trim().to_string(),
             "url" => state.url = value.trim().to_string(),
             "installed" => state.installed = value.trim() == "1",
+            "lang" => state.lang = value.trim().to_string(),
             _ => {}
         }
     }
@@ -107,13 +110,27 @@ struct Tray {
     open_dsh: MenuItem,
     toggle: MenuItem,
     restart: MenuItem,
+    manager: MenuItem,
+    quit: MenuItem,
 }
 
 impl Tray {
     fn sync(&self, state: &TrayState) {
         let live = state.live();
+        let en = state.lang == "en";
+        // 文案跟着界面语言走（安装时选的语言，设置页也能改）
+        self.open_dsh.set_text(if en { "Open dsh" } else { "打开 DSH" });
+        self.restart.set_text(if en { "Restart dsh" } else { "重启 DSH" });
+        self.manager.set_text(if en { "Open manager" } else { "打开管理页" });
+        self.quit.set_text(if en { "Quit" } else { "退出" });
         self.open_dsh.set_enabled(!state.url.is_empty());
-        self.toggle.set_text(if live { "停止" } else { "启动" });
+        self.toggle.set_text(if live {
+            if en { "Stop" } else { "停止" }
+        } else if en {
+            "Start"
+        } else {
+            "启动"
+        });
         self.toggle.set_enabled(state.installed && state.status != "stopping");
         self.restart.set_enabled(state.status == "running");
     }
@@ -158,6 +175,8 @@ fn build_tray(root: &Path) -> Option<Tray> {
         _icon: icon,
         open_dsh,
         toggle,
+        manager,
+        quit,
         restart,
     })
 }

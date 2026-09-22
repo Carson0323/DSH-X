@@ -28,6 +28,7 @@ import {
   resolvePort,
   resolveProfile,
   safeDataDir,
+  safeLang,
   safePort,
   safeProfile,
   safeArgs,
@@ -72,6 +73,18 @@ const START_TIMEOUT_MS = 120_000
 let PROFILE_NAME = resolveProfile()
 // 额外启动参数：用户自己加的 argv，拼在命令行末尾（设置页可改）
 let EXTRA_ARGS = parseArgs(loadSettingsSync().args)
+// 界面语言（zh / en）：settings.json 为准；安装时选的语言写在安装目录 lang.txt，启动时对齐一次
+const INSTALL_LANG = join(ROOT, 'lang.txt')
+let LANG = safeLang(loadSettingsSync().lang) || installLang() || 'zh'
+
+/** 安装目录里的 lang.txt（安装程序写的），只认 zh / en。 */
+function installLang() {
+  try {
+    return safeLang(readFileSync(INSTALL_LANG, 'utf8'))
+  } catch {
+    return ''
+  }
+}
 const LOG_DIR = process.env.APPDATA ? join(process.env.APPDATA, 'DSH') : join(ROOT, 'data')
 const LOG_FILE = join(LOG_DIR, 'manager.log')
 const LOG_MAX_BYTES = 5 * 1024 * 1024
@@ -527,6 +540,7 @@ async function publicSettings() {
     profiles: listProfiles(),
     // 回显用户填的原文（带引号），不能回显 parse 后的数组，否则含空格的值再存一次就被拆开了
     args: stored.args ?? '',
+    lang: LANG,
   }
 }
 
@@ -542,6 +556,7 @@ async function saveManagerSettings(body) {
     ...('port' in body ? { port: safePort(body.port) } : {}),
     ...('profile' in body ? { profile: safeProfile(body.profile) } : {}),
     ...('args' in body ? { args: safeArgs(body.args) } : {}),
+    ...('lang' in body ? { lang: safeLang(body.lang) } : {}),
     autoStart: Boolean(body.autoStart),
     seedMarket: body.seedMarket !== false,
     autoDisablePlugins: body.autoDisablePlugins !== false,
@@ -553,6 +568,7 @@ async function saveManagerSettings(body) {
   }
   // profile 立即生效：插件页、启动参数、npmrc 都读这个变量（已经在跑的 dsh 不受影响）
   EXTRA_ARGS = parseArgs(stored.args)
+  if (safeLang(stored.lang)) LANG = safeLang(stored.lang)
   if (stored.profile && stored.profile !== PROFILE_NAME) {
     pushLog(`启动 profile 改为 ${stored.profile}`)
     PROFILE_NAME = stored.profile
@@ -1767,6 +1783,7 @@ async function handleApi(req, res, url) {
       `status=${running?.status || 'stopped'}`,
       `url=${running?.url || ''}`,
       `installed=${snap.installed.length ? 1 : 0}`,
+      `lang=${LANG}`,
     ].join('\n'), 'text/plain; charset=utf-8')
     return
   }
@@ -1918,6 +1935,13 @@ export async function startServer() {
   if (!process.env.PORT) PORT = resolvePort()
   PROFILE_NAME = resolveProfile()
   EXTRA_ARGS = parseArgs((await loadSettings()).args)
+  const stored = await loadSettings()
+  // 安装/升级时选过语言就以它为准，否则用设置里存的
+  const fromInstall = installLang()
+  const storedLang = safeLang(stored.lang)
+  if (fromInstall && fromInstall !== storedLang) await saveSettings({ lang: fromInstall })
+  LANG = fromInstall || storedLang || 'zh'
+  LANG = LANG === 'en' ? 'en' : 'zh'
   DATA = resolveDataDir()
   CONFIG = join(DATA, 'config.json')
   await mkdir(DATA, { recursive: true })
@@ -1945,7 +1969,9 @@ export async function startServer() {
       const type = mime(path)
       if (isTextFile(file)) {
         let body = await readFile(path, 'utf8')
-        if (file === 'index.html') body = body.replaceAll('__APP_VERSION__', APP_VERSION)
+        if (file === 'index.html') {
+          body = body.replaceAll('__APP_VERSION__', APP_VERSION).replaceAll('__APP_LANG__', LANG)
+        }
         send(res, 200, body, `${type}; charset=utf-8`)
         return
       }

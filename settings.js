@@ -55,6 +55,8 @@ export const DEFAULTS = {
   dataDir: '',
   port: DEFAULT_PORT,
   profile: DEFAULT_PROFILE,
+  // 界面语言：zh / en（安装时选的语言写进安装目录的 lang.txt，启动器读一次落到这里）
+  lang: '',
   // 额外启动参数（一行文本，空格分词，含空格的值用引号包起来）
   args: '',
   autoStart: false,
@@ -134,6 +136,12 @@ export function resolveProfile() {
   } catch {
     return DEFAULT_PROFILE
   }
+}
+
+/** 界面语言：只认 zh / en，其余当没设。 */
+export function safeLang(value) {
+  const lang = String(value ?? '').trim().toLowerCase()
+  return lang === 'en' ? 'en' : lang === 'zh' ? 'zh' : ''
 }
 
 /** 管理页端口：环境变量 PORT（开发和测试用）优先，其次 settings.json。 */
@@ -218,6 +226,7 @@ export async function saveSettings(patch) {
   }
   if ('profile' in patch) merged.profile = safeProfile(patch.profile)
   merged.args = 'args' in patch ? safeArgs(patch.args) : safeArgs(merged.args)
+  merged.lang = 'lang' in patch ? safeLang(patch.lang) : safeLang(merged.lang)
   merged.autoStart = Boolean(merged.autoStart)
   merged.seedMarket = merged.seedMarket !== false
   merged.autoDisablePlugins = merged.autoDisablePlugins !== false

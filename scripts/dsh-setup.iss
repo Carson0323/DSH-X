@@ -96,7 +96,17 @@ Type: filesandordirs; Name: "{app}\node_modules"
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
+  Lang: String;
 begin
+  // 让启动器知道安装时装的是什么语言（界面双语，见 server.js / public/index.html）
+  if (CurStep = ssPostInstall) then begin
+    if ActiveLanguage = 'english' then
+      Lang := 'en'
+    else
+      Lang := 'zh';
+    SaveStringToFile(ExpandConstant('{app}\lang.txt'), Lang, False);
+  end;
+
   if (CurStep <> ssDone) or (not WizardSilent) then
     Exit;
   // 先拉起新版
