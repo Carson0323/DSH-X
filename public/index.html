@@ -1977,7 +1977,7 @@
       if ('dataDir' in data) {
         dataDirEl.value = String(data.dataDir ?? '')
         // 一次说清三件事：这是什么的目录、插件和 profile 不归它管、已装的版本不会搬家
-        dataDirHint.textContent = `dsh 各版本装在这里（每个几百 MB）；插件和 profile 仍在 ${data.dshHome || '~/.dsh'}。已安装的版本不会自动迁移。`
+        dataDirHint.textContent = `dsh 各版本装在这里（每个几百 MB）；插件和 profile 仍在 ${data.dshHome || '~/.dsh'}。已安装的版本不会自动迁移。要选当前用户能写的目录，别用 Program Files、Windows 这类系统目录。`
       }
       if ('autoStart' in data) autoStartEl.checked = Boolean(data.autoStart)
       if ('seedMarket' in data) seedMarketEl.checked = data.seedMarket !== false

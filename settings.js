@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -14,6 +14,39 @@ const RUN_NAME = 'DSH'
 
 /** 管理页端口，默认这个；被别的程序占了可以在设置页改。 */
 export const DEFAULT_PORT = 3780
+
+/** 目录不可用时给一句人话，别把 EPERM 原样丢给用户。 */
+function describeDirError(dir, error) {
+  const code = String(error?.code || '')
+  if (code === 'EPERM' || code === 'EACCES') {
+    return `没有权限写这个目录：${dir}；请换一个当前用户能写的普通目录（例如 D:\\DSH-X），不要用 Program Files、Windows 这类系统目录。`
+  }
+  if (code === 'ENOTDIR' || code === 'EEXIST') {
+    return `这不是一个目录：${dir}`
+  }
+  return `版本目录不可用：${dir}（${error?.message || error}）`
+}
+
+/**
+ * 版本目录得真的能写：先建目录，再写一个探针文件。
+ * 单靠 mkdir 不够——目录已存在时 recursive mkdir 会静默成功，但里面未必能写文件。
+ * 失败在切换目录**之前**抛出，所以 DATA / settings.json 都不会被改坏。
+ */
+export async function ensureWritableDir(dir) {
+  try {
+    await mkdir(dir, { recursive: true })
+  } catch (error) {
+    throw new Error(describeDirError(dir, error))
+  }
+  const probe = join(dir, '.dsh-write-probe')
+  try {
+    await writeFile(probe, '')
+    await rm(probe, { force: true })
+  } catch (error) {
+    throw new Error(describeDirError(dir, error))
+  }
+  return dir
+}
 
 /** dsh 的启动 profile（一个 profile 一套插件和数据），默认 web。 */
 export const DEFAULT_PROFILE = 'web'

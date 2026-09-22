@@ -20,6 +20,7 @@ import {
   autoStartEnabled,
   DEFAULT_PORT,
   ensureSettings,
+  ensureWritableDir,
   loadSettings,
   loadSettingsSync,
   parseArgs,
@@ -503,7 +504,8 @@ async function snapshot() {
 }
 
 async function applyDataDir(dir) {
-  await mkdir(dir, { recursive: true })
+  // 先确认真的能写（含已存在但只读的目录），失败就带着人话抛出，DATA 保持不变
+  await ensureWritableDir(dir)
   DATA = dir
   CONFIG = join(DATA, 'config.json')
   pushLog(`版本目录 ${DATA}`)
