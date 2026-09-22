@@ -256,6 +256,12 @@
       width: 148px;
       flex: 0 0 auto;
       cursor: pointer;
+      /* appearance:none 会把原生箭头去掉，这里自己画一个 */
+      background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%236b7d9c' d='M0 0h12L6 8z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 9px 6px;
+      padding-right: 30px;
     }
     /* 设置页的行：标题在左、控件在右，跟开关同一套节奏 */
     .field {
@@ -302,7 +308,16 @@
     }
     .advanced[open] summary::before { transform: rotate(90deg); }
     .advanced summary:hover { color: var(--text); }
-    .advanced .field { margin: 14px 0 0; }
+    .advanced .field { margin: 12px 0 0; }
+    /* 高级设置里的控件比主表单矮一档，三行看着才不散 */
+    .advanced .field input,
+    .advanced .field select { padding: 9px 12px; border-radius: 10px; font-size: 13px; }
+    .advanced .field input[type=number] { padding-right: 12px; }
+    /* 版本目录是长路径，单独占一整行 */
+    .advanced .field.wide { display: block; }
+    .advanced .field.wide > span { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12px; letter-spacing: 0.08em; }
+    .advanced .field.wide input { width: 100%; text-align: left; font-variant-numeric: normal; }
+    .advanced .hint { margin: 8px 0 0; font-size: 12px; }
     /* 版本下拉：原生 select 的弹出列表没法跟随页面配色，这里整套自绘 */
     .select { position: relative; }
     .select-trigger {
@@ -845,7 +860,7 @@
           <label class="field"><span>启动 profile</span><select id="profile"></select></label>
           <label class="field"><span>管理页端口</span><input id="port" type="number" min="1" max="65535" step="1" inputmode="numeric" /></label>
           <p class="hint" id="portHint"></p>
-          <label class="field"><span>版本目录</span><input id="dataDir" type="text" /></label>
+          <label class="field wide"><span>版本目录</span><input id="dataDir" type="text" /></label>
           <p class="hint" id="dataDirHint"></p>
         </details>
         <button class="primary" id="saveSettings" type="button" style="margin-top: 22px">保存</button>
