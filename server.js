@@ -21,12 +21,15 @@ import {
   DEFAULT_PORT,
   ensureSettings,
   loadSettings,
+  loadSettingsSync,
+  parseArgs,
   resolveDataDir,
   resolvePort,
   resolveProfile,
   safeDataDir,
   safePort,
   safeProfile,
+  safeArgs,
   saveSettings,
   setAutoStart,
 } from './settings.js'
@@ -66,6 +69,8 @@ const READY_RE = /dsh web:\s+(https?:\/\/[^\s]+)/
 const START_TIMEOUT_MS = 120_000
 // 启动 profile：设置页可改，startServer() 里按设置定值
 let PROFILE_NAME = resolveProfile()
+// 额外启动参数：用户自己加的 argv，拼在命令行末尾（设置页可改）
+let EXTRA_ARGS = parseArgs(loadSettingsSync().args)
 const LOG_DIR = process.env.APPDATA ? join(process.env.APPDATA, 'DSH') : join(ROOT, 'data')
 const LOG_FILE = join(LOG_DIR, 'manager.log')
 const LOG_MAX_BYTES = 5 * 1024 * 1024
@@ -518,6 +523,8 @@ async function publicSettings() {
     autoDisablePlugins: stored.autoDisablePlugins !== false,
     profile: PROFILE_NAME,
     profiles: listProfiles(),
+    // 回显用户填的原文（带引号），不能回显 parse 后的数组，否则含空格的值再存一次就被拆开了
+    args: stored.args ?? '',
   }
 }
 
@@ -532,6 +539,7 @@ async function saveManagerSettings(body) {
     dataDir: DATA,
     ...('port' in body ? { port: safePort(body.port) } : {}),
     ...('profile' in body ? { profile: safeProfile(body.profile) } : {}),
+    ...('args' in body ? { args: safeArgs(body.args) } : {}),
     autoStart: Boolean(body.autoStart),
     seedMarket: body.seedMarket !== false,
     autoDisablePlugins: body.autoDisablePlugins !== false,
@@ -542,6 +550,7 @@ async function saveManagerSettings(body) {
     pushLog(`开机自启未写入: ${error instanceof Error ? error.message : error}`)
   }
   // profile 立即生效：插件页、启动参数、npmrc 都读这个变量（已经在跑的 dsh 不受影响）
+  EXTRA_ARGS = parseArgs(stored.args)
   if (stored.profile && stored.profile !== PROFILE_NAME) {
     pushLog(`启动 profile 改为 ${stored.profile}`)
     PROFILE_NAME = stored.profile
@@ -639,7 +648,9 @@ function profileDir() {
 
 /** dsh 启动参数。 */
 function bootArgs() {
-  return [PROFILE_NAME, '--host', '127.0.0.1', '--port', '0', '--no-open']
+  // 额外参数放最后：用户可以用它覆盖 --port 之类（启动器是从 dsh 的输出里读真实地址的，
+  // 所以换个端口也不影响管理页拿到的链接）
+  return [PROFILE_NAME, '--host', '127.0.0.1', '--port', '0', '--no-open', ...EXTRA_ARGS]
 }
 
 /** dsh 子进程的加载钩子：启动加速 + 会话事件词汇兼容（含 worker 线程那份）。 */
@@ -1561,6 +1572,37 @@ function listProfiles() {
   return [...names].sort()
 }
 
+/**
+ * 弹系统「选择文件夹」对话框，返回选中的绝对路径（取消/失败就返回空串）。
+ *
+ * 页面里的 `<input type="file" webkitdirectory>` 只能拿到相对路径，浏览器也不给绝对路径，
+ * 所以目录选择必须由管理页所在的本机进程来做。
+ */
+function pickDirectory() {
+  if (process.platform !== 'win32') throw new Error('只有 Windows 支持目录选择')
+  const script = [
+    'Add-Type -AssemblyName System.Windows.Forms | Out-Null',
+    '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
+    "$d.Description = '选择 dsh 版本目录'",
+    '$d.ShowNewFolderButton = $true',
+    "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($d.SelectedPath) }",
+  ].join('; ')
+  return new Promise((resolve, reject) => {
+    execFile(
+      'powershell',
+      ['-STA', '-NoProfile', '-Command', script],
+      { windowsHide: true, timeout: 5 * 60 * 1000, encoding: 'utf8' },
+      (error, stdout) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        resolve(String(stdout || '').trim())
+      },
+    )
+  })
+}
+
 /** 允许当作"本机"的主机名——打开本机页面、判断请求来源都用它。 */
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
 
@@ -1837,6 +1879,15 @@ async function handleApi(req, res, url) {
     send(res, 200, { ok: true })
     return
   }
+  if (req.method === 'POST' && url.pathname === '/api/pick-dir') {
+    try {
+      send(res, 200, { path: await pickDirectory() })
+    } catch (error) {
+      pushLog(`目录选择失败: ${error?.message || error}`)
+      send(res, 200, { path: '', error: error?.message || String(error) })
+    }
+    return
+  }
   if (req.method === 'POST' && url.pathname === '/api/open') {
     openLocalUrl(body.url)
     send(res, 200, { ok: true })
@@ -1864,6 +1915,7 @@ export async function startServer() {
   // 设置页改过端口 / profile 的话，这里拿到的就是新值（PORT 环境变量仍然优先，测试用）
   if (!process.env.PORT) PORT = resolvePort()
   PROFILE_NAME = resolveProfile()
+  EXTRA_ARGS = parseArgs((await loadSettings()).args)
   DATA = resolveDataDir()
   CONFIG = join(DATA, 'config.json')
   await mkdir(DATA, { recursive: true })

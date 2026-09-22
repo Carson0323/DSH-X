@@ -317,6 +317,9 @@
     .advanced .field.wide { display: block; }
     .advanced .field.wide > span { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12px; letter-spacing: 0.08em; }
     .advanced .field.wide input { width: 100%; text-align: left; font-variant-numeric: normal; }
+    .advanced .field.wide .row-input { display: flex; align-items: center; gap: 8px; }
+    .advanced .field.wide .row-input input { flex: 1 1 auto; min-width: 0; }
+    #pickDir { flex: 0 0 auto; height: 34px; }
     .advanced .hint { margin: 8px 0 0; font-size: 12px; }
     /* 版本下拉：原生 select 的弹出列表没法跟随页面配色，这里整套自绘 */
     .select { position: relative; }
@@ -860,7 +863,14 @@
           <label class="field"><span>启动 profile</span><select id="profile"></select></label>
           <label class="field"><span>管理页端口</span><input id="port" type="number" min="1" max="65535" step="1" inputmode="numeric" /></label>
           <p class="hint" id="portHint"></p>
-          <label class="field wide"><span>版本目录</span><input id="dataDir" type="text" /></label>
+          <label class="field wide"><span>额外启动参数</span><input id="args" type="text" spellcheck="false" autocomplete="off" placeholder="例如：--log-level debug" /></label>
+          <p class="hint">追加到 dsh 命令行末尾（空格分词，含空格的值用引号包起来）。已装的插件、数据不受影响。</p>
+          <label class="field wide"><span>版本目录</span>
+            <span class="row-input">
+              <input id="dataDir" type="text" />
+              <button class="ghost" id="pickDir" type="button">浏览…</button>
+            </span>
+          </label>
           <p class="hint" id="dataDirHint"></p>
         </details>
         <button class="primary" id="saveSettings" type="button" style="margin-top: 22px">保存</button>
@@ -1939,12 +1949,15 @@
     const profileEl = document.getElementById('profile')
     const portEl = document.getElementById('port')
     const portHint = document.getElementById('portHint')
+    const argsEl = document.getElementById('args')
+    const pickDirEl = document.getElementById('pickDir')
     const dataDirEl = document.getElementById('dataDir')
     const dataDirHint = document.getElementById('dataDirHint')
     const settingsHint = document.getElementById('settingsHint')
     const saveSettingsEl = document.getElementById('saveSettings')
 
     function fillSettings(data) {
+      if ('args' in data) argsEl.value = String(data.args ?? '')
       if ('profile' in data) {
         const list = Array.isArray(data.profiles) && data.profiles.length ? data.profiles : [String(data.profile ?? 'web')]
         profileEl.innerHTML = list.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')
@@ -1980,6 +1993,25 @@
     // 比较目录时忽略末尾斜杠：用户常带着 '\' 保存，与 resolve 后的值比会误判成改过
     const normDir = (value) => String(value ?? '').trim().replace(/[\\/]+$/, '')
 
+    pickDirEl.onclick = async () => {
+      pickDirEl.disabled = true
+      const before = dataDirHint.textContent
+      dataDirHint.textContent = '在弹出的对话框里选一个目录…'
+      try {
+        const data = await post('/api/pick-dir', {})
+        if (data.path) {
+          dataDirEl.value = data.path
+          dataDirHint.textContent = '已选好目录，别忘了点「保存」让它生效。'
+        } else {
+          dataDirHint.textContent = data.error ? `没选成：${data.error}` : before
+        }
+      } catch (error) {
+        dataDirHint.textContent = error.message
+      } finally {
+        pickDirEl.disabled = false
+      }
+    }
+
     saveSettingsEl.onclick = async () => {
       saveSettingsEl.disabled = true
       settingsHint.textContent = '正在保存…'
@@ -1987,6 +2019,7 @@
       try {
         const data = await post('/api/settings', {
           profile: profileEl.value.trim(),
+          args: argsEl.value,
           port: Number(portEl.value),
           // 留空表示不改：服务端只在有值时才热切换版本目录
           ...(dirBefore ? { dataDir: dirBefore } : {}),

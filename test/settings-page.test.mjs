@@ -14,12 +14,13 @@ const inlineScript = () => {
 }
 
 test('设置页有版本目录入口，放在高级设置里、复用现有字段样式', () => {
-  // 版本目录是长路径，用 .field.wide 占一整行，输入框铺满；profile / 端口仍是窄行
+  // 版本目录是长路径，用 .field.wide 占一整行，输入框铺满并带「浏览…」按钮；profile / 端口仍是窄行
   assert.match(
     html,
-    /<label class="field wide"><span>版本目录<\/span><input id="dataDir" type="text" \/><\/label>/,
-    '版本目录单独占一行（.field.wide）',
+    /<label class="field wide"><span>版本目录<\/span>[\s\S]{0,200}?<input id="dataDir" type="text" \/>[\s\S]{0,200}?<button class="ghost" id="pickDir"/,
+    '版本目录单独占一行（.field.wide），旁边有目录选择按钮',
   )
+  assert.match(html, /post\('\/api\/pick-dir'/, '浏览按钮走 /api/pick-dir')
   assert.match(html, /\.advanced \.field\.wide \{ display: block; \}/, '整行样式存在')
   assert.match(html, /<label class="field"><span>启动 profile<\/span><select id="profile">/, 'profile 仍是窄行下拉')
   assert.match(html, /<p class="hint" id="dataDirHint"><\/p>/, '提示行复用 .hint（空内容自动隐藏）')

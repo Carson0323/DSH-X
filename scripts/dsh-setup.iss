@@ -13,6 +13,13 @@ AppId={{8F3C2A91-6B47-4E1D-9C5A-2D8E0F4B7A16}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+; 版本资源写全：未签名安装包尤其需要，信誉/启发式会读这些字段
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppName} 安装程序
+VersionInfoProductName={#MyAppName}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppVersion}
+VersionInfoCopyright=Copyright (C) 2026 {#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\DSH
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes

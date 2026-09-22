@@ -22,6 +22,8 @@ export const DEFAULTS = {
   dataDir: '',
   port: DEFAULT_PORT,
   profile: DEFAULT_PROFILE,
+  // 额外启动参数（一行文本，空格分词，含空格的值用引号包起来）
+  args: '',
   autoStart: false,
   seedMarket: true,
   // 启动失败时按错误点名自动禁用问题插件（兼容模式），再重试
@@ -46,6 +48,45 @@ export function safeProfile(value) {
     throw new Error('profile 名只能用字母、数字、点、下划线、连字符（1-32 个字符）')
   }
   return name
+}
+
+/**
+ * 把「额外启动参数」那行文本切成 argv：空白分词，单双引号里的内容原样保留
+ * （`--msg "hello world"` → ['--msg', 'hello world']）。未闭合的引号按到行尾处理。
+ */
+export function parseArgs(text) {
+  const out = []
+  let current = ''
+  let quote = ''
+  let quoted = false
+  for (const ch of String(text ?? '')) {
+    if (quote) {
+      if (ch === quote) quote = ''
+      else current += ch
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      quoted = true
+      continue
+    }
+    if (/\s/.test(ch)) {
+      if (current || quoted) out.push(current)
+      current = ''
+      quoted = false
+      continue
+    }
+    current += ch
+  }
+  if (current || quoted) out.push(current)
+  return out
+}
+
+/** 额外启动参数：只留文本，长度收个口（解析在 server.js 里做）。 */
+export function safeArgs(value) {
+  const text = String(value ?? '').trim()
+  if (text.length > 2000) throw new Error('额外启动参数太长了（上限 2000 字符）')
+  return text
 }
 
 /** 启动 profile：环境变量 DSH_PROFILE 优先（开发和测试用），其次 settings.json。 */
@@ -143,6 +184,7 @@ export async function saveSettings(patch) {
     merged.profile = DEFAULT_PROFILE
   }
   if ('profile' in patch) merged.profile = safeProfile(patch.profile)
+  merged.args = 'args' in patch ? safeArgs(patch.args) : safeArgs(merged.args)
   merged.autoStart = Boolean(merged.autoStart)
   merged.seedMarket = merged.seedMarket !== false
   merged.autoDisablePlugins = merged.autoDisablePlugins !== false
