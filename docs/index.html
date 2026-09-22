@@ -87,21 +87,18 @@
       font-variant-numeric: tabular-nums;
     }
     .stars svg { width: .875rem; height: .875rem; fill: #eab308; }
-    /* 下载量徽章：和 star 徽章同款，数据没拉到就整个不显示 */
+    /* 下载次数：安安静静待在按钮右边的说明文字，不做成第二个按钮；数据没拉到就整块不显示 */
     .dl {
       display: inline-flex;
       align-items: center;
       gap: .375rem;
-      height: 2.5rem;
-      padding: 0 .875rem;
-      border: 1px solid var(--line);
-      border-radius: .625rem;
-      color: var(--muted);
+      color: var(--dim);
       font-size: .8125rem;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
-    .dl svg { width: 1rem; height: 1rem; fill: currentColor; opacity: .7; }
+    .dl b { color: var(--muted); font-weight: 600; }
+    .dl svg { width: .9375rem; height: .9375rem; fill: currentColor; opacity: .55; }
     .dl[hidden] { display: none; }
     .stage {
       display: grid;
@@ -296,7 +293,7 @@
           .reduce((n, a) => n + (a.download_count || 0), 0), 0)
         if (!total) return
         const chip = document.getElementById("dlCount")
-        document.getElementById("dlText").textContent = "已下载 " + total.toLocaleString() + " 次"
+        document.getElementById("dlText").innerHTML = "已有 <b>" + total.toLocaleString() + "</b> 次下载"
         chip.hidden = false
       })
       .catch(() => {})
