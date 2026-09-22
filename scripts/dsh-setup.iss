@@ -35,9 +35,6 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
-; 默认是 auto：检测到已装过就藏掉「选择安装位置」那一页，于是升级时没法换目录。
-; 这里强制显示——升级默认填上次的目录，想换（比如换到 D 盘）随时改。
-DisableDirPage=no
 UsePreviousAppDir=yes
 ; force 而不是 yes：正常情况下启动器在安装程序检查之前就退出了，这一页不会出现；
 ; 万一还没退干净，force 直接结束它，而不是等它优雅关闭（那个等待会让这一页卡住）。
