@@ -1492,8 +1492,25 @@ export function setHost(next) {
   host = { ...host, ...next }
 }
 
+/**
+ * 这个 URL 能交给本机浏览器打开吗。
+ *
+ * 必须整串校验：URL 最终是交给 `cmd /c start` 打开的，而 cmd 把 `& | ^ < > ( )`
+ * 都当语句分隔符、`%` 当变量展开。Node 给 execFile 的参数加引号只认空格/制表符/
+ * 引号，这些字符一个都拦不住——`http://127.0.0.1:1/?&notepad` 从前能过校验（正则
+ * 只锚定了前缀），最终命令行就是 `cmd /c start "" http://127.0.0.1:1/?&notepad`，
+ * notepad 原样执行（#4）。所以这里按 URL 语法取白名单，cmd 的元字符一个都不放行；
+ * 管理页只会拿它打开 dsh 自己的地址和本管理器页面，都是单 token 参数，够用。
+ * 校验不过时前端会退化成 window.open，真要多参数也不会把路堵死。
+ */
+const LOCAL_URL_RE = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d{1,5})?(?:[/?#][A-Za-z0-9\-._~:/?#@$;=+,*]*)?$/i
+
+function canOpenLocally(target) {
+  return typeof target === 'string' && LOCAL_URL_RE.test(target)
+}
+
 function openLocalUrl(target) {
-  if (typeof target !== 'string' || !/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:[/?#]|$)/i.test(target)) {
+  if (!canOpenLocally(target)) {
     throw new Error('只能打开本机地址')
   }
   if (process.platform === 'win32') {
@@ -1503,7 +1520,7 @@ function openLocalUrl(target) {
   execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [target])
 }
 
-export { snapshot, stop }
+export { canOpenLocally, snapshot, stop }
 
 async function stop(version) {
   const proc = current
