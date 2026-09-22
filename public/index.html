@@ -1010,7 +1010,7 @@
   "已保存。重启启动器后管理页改到 {port} 端口。": "Saved. The manager moves to port {port} after a restart.",
   "已保存。版本目录已改为 {dir}（立即生效）；已安装的版本不会自动迁移，需要就手动复制过去。": "Saved. The version directory is now {dir} (effective immediately); installed versions are not moved automatically.",
   "当前实际监听 {live} 端口（配置的 {port} 被别的程序占用，启动时自动顺延）。": "Actually listening on {live} (port {port} was taken, so the launcher moved on).",
-  "dsh 各版本装在这里（每个几百 MB）；插件和 profile 仍在 {home}。已安装的版本不会自动迁移。要选当前用户能写的目录，别用 Program Files、Windows 这类系统目录。": "dsh versions are installed here (a few hundred MB each); plugins and profiles stay in {home}. Installed versions are not moved automatically — pick a directory the current user can write to, not Program Files or Windows.",
+  "dsh 各版本装在这里（几百 MB 一个）；插件和 profile 仍在 {home}，已装版本不自动迁移。": "dsh versions go here (a few hundred MB each); plugins and profiles stay in {home}, and installed versions are not moved.",
   "上次启动自动禁用了：{names}（认为没问题可在上面重新打开）。": "Disabled at the last start: {names} (turn them back on here if that was wrong).",
   "启动时自动禁用了：{names}（插件页可恢复）": "Disabled at start: {names} (restore them on the Plugins page)",
   "⚠ 页面自检：{failed}/{total} 个插件包加载失败": "⚠ Page self-check: {failed}/{total} client plugin bundles failed to load",
@@ -2120,7 +2120,7 @@
       if ('dataDir' in data) {
         dataDirEl.value = String(data.dataDir ?? '')
         // 一次说清三件事：这是什么的目录、插件和 profile 不归它管、已装的版本不会搬家
-        dataDirHint.textContent = t('dsh 各版本装在这里（每个几百 MB）；插件和 profile 仍在 {home}。已安装的版本不会自动迁移。要选当前用户能写的目录，别用 Program Files、Windows 这类系统目录。', { home: data.dshHome || '~/.dsh' })
+        dataDirHint.textContent = t('dsh 各版本装在这里（几百 MB 一个）；插件和 profile 仍在 {home}，已装版本不自动迁移。', { home: data.dshHome || '~/.dsh' })
       }
       if ('autoStart' in data) autoStartEl.checked = Boolean(data.autoStart)
       if ('seedMarket' in data) seedMarketEl.checked = data.seedMarket !== false
