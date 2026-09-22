@@ -87,6 +87,22 @@
       font-variant-numeric: tabular-nums;
     }
     .stars svg { width: .875rem; height: .875rem; fill: #eab308; }
+    /* 下载量徽章：和 star 徽章同款，数据没拉到就整个不显示 */
+    .dl {
+      display: inline-flex;
+      align-items: center;
+      gap: .375rem;
+      height: 2.5rem;
+      padding: 0 .875rem;
+      border: 1px solid var(--line);
+      border-radius: .625rem;
+      color: var(--muted);
+      font-size: .8125rem;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .dl svg { width: 1rem; height: 1rem; fill: currentColor; opacity: .7; }
+    .dl[hidden] { display: none; }
     .stage {
       display: grid;
       align-items: center;
@@ -230,6 +246,10 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 4.2 10.5 3v8.15H2V4.2Zm9.5-1.34L22 1.35v9.8H11.5V2.86ZM2 12.15h8.5V20.3L2 19.1v-6.95Zm9.5 0H22v9.8l-10.5-1.51v-8.29Z"/></svg>
           下载 Windows 版
         </a>
+        <span class="dl" id="dlCount" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a1 1 0 0 1 1 1v9.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5A1 1 0 1 1 7.7 10.3l3.3 3.3V4a1 1 0 0 1 1-1Zm-7 15a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"/></svg>
+          <span id="dlText"></span>
+        </span>
       </div>
       <div class="links">
         <a class="btn-ghost" href="https://github.com/yyh-001/DSH-X">
@@ -266,6 +286,21 @@
         document.getElementById("stars").title = n.toLocaleString() + " GitHub stars"
       })
       .catch(() => {})
+    // 下载次数：把所有 release 里 DSH-Setup.exe 的下载数加起来（只取 latest 会漏掉旧版本）
+    fetch("https://api.github.com/repos/yyh-001/DSH-X/releases?per_page=100")
+      .then((r) => r.ok ? r.json() : null)
+      .then((list) => {
+        if (!Array.isArray(list)) return
+        const total = list.reduce((sum, rel) => sum + (rel.assets || [])
+          .filter((a) => a.name === "DSH-Setup.exe")
+          .reduce((n, a) => n + (a.download_count || 0), 0), 0)
+        if (!total) return
+        const chip = document.getElementById("dlCount")
+        document.getElementById("dlText").textContent = "已下载 " + total.toLocaleString() + " 次"
+        chip.hidden = false
+      })
+      .catch(() => {})
+
     fetch("https://api.github.com/repos/yyh-001/DSH-X/releases/latest")
       .then((r) => r.ok ? r.json() : null)
       .then((rel) => {
