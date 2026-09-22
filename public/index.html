@@ -845,6 +845,8 @@
           <label class="field"><span>启动 profile</span><select id="profile"></select></label>
           <label class="field"><span>管理页端口</span><input id="port" type="number" min="1" max="65535" step="1" inputmode="numeric" /></label>
           <p class="hint" id="portHint"></p>
+          <label class="field"><span>版本目录</span><input id="dataDir" type="text" /></label>
+          <p class="hint" id="dataDirHint"></p>
         </details>
         <button class="primary" id="saveSettings" type="button" style="margin-top: 22px">保存</button>
         <p class="hint" id="settingsHint"></p>
@@ -1902,6 +1904,8 @@
     const profileEl = document.getElementById('profile')
     const portEl = document.getElementById('port')
     const portHint = document.getElementById('portHint')
+    const dataDirEl = document.getElementById('dataDir')
+    const dataDirHint = document.getElementById('dataDirHint')
     const settingsHint = document.getElementById('settingsHint')
     const saveSettingsEl = document.getElementById('saveSettings')
 
@@ -1922,6 +1926,11 @@
           ? `当前实际监听 ${live} 端口（配置的 ${data.port} 被别的程序占用，启动时自动顺延）。`
           : ''
       }
+      if ('dataDir' in data) {
+        dataDirEl.value = String(data.dataDir ?? '')
+        // 一次说清三件事：这是什么的目录、插件和 profile 不归它管、已装的版本不会搬家
+        dataDirHint.textContent = `dsh 各版本装在这里（每个几百 MB）；插件和 profile 仍在 ${data.dshHome || '~/.dsh'}。已安装的版本不会自动迁移。`
+      }
       if ('autoStart' in data) autoStartEl.checked = Boolean(data.autoStart)
       if ('seedMarket' in data) seedMarketEl.checked = data.seedMarket !== false
       if ('autoDisablePlugins' in data) autoDisableEl.checked = data.autoDisablePlugins !== false
@@ -1933,22 +1942,32 @@
       })
     }
 
+    // 比较目录时忽略末尾斜杠：用户常带着 '\' 保存，与 resolve 后的值比会误判成改过
+    const normDir = (value) => String(value ?? '').trim().replace(/[\\/]+$/, '')
+
     saveSettingsEl.onclick = async () => {
       saveSettingsEl.disabled = true
       settingsHint.textContent = '正在保存…'
+      const dirBefore = dataDirEl.value.trim()
       try {
         const data = await post('/api/settings', {
           profile: profileEl.value.trim(),
           port: Number(portEl.value),
+          // 留空表示不改：服务端只在有值时才热切换版本目录
+          ...(dirBefore ? { dataDir: dirBefore } : {}),
           autoStart: autoStartEl.checked,
           seedMarket: seedMarketEl.checked,
           autoDisablePlugins: autoDisableEl.checked,
         })
         fillSettings(data)
         // 管理页还监听在旧端口上：换端口得重启启动器（窗口和托盘都是它开的）
-        settingsHint.textContent = Number(data.port) !== Number(data.listenPort)
-          ? `已保存。重启启动器后管理页改到 ${data.port} 端口。`
-          : '已保存。'
+        if (Number(data.port) !== Number(data.listenPort)) {
+          settingsHint.textContent = `已保存。重启启动器后管理页改到 ${data.port} 端口。`
+        } else if (dirBefore && data.dataDir && normDir(data.dataDir) !== normDir(dirBefore)) {
+          settingsHint.textContent = `已保存。版本目录已改为 ${data.dataDir}（立即生效）；已安装的版本不会自动迁移，需要就手动复制过去。`
+        } else {
+          settingsHint.textContent = '已保存。'
+        }
       } catch (error) {
         settingsHint.textContent = error.message
       } finally {
