@@ -10,6 +10,10 @@
   <a href="https://github.com/yyh-001/DSH-X">Star</a>
 </p>
 
+<p align="center">
+  中文 | <a href="README.en.md">English</a>
+</p>
+
 DeepSeek Harness 轻量 Windows 启动器。选一个版本，在系统浏览器中启动 DSH Web。
 
 > [!IMPORTANT]
