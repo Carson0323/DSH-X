@@ -6,25 +6,18 @@
     <button class="mascot-puppet" type="button" aria-label="互动看板娘">
       <svg viewBox="0 0 1254 1254" aria-hidden="true">
         <defs>
-          <clipPath id="mascot-tuft"><rect x="420" y="20" width="400" height="280"/></clipPath>
-          <clipPath id="mascot-ear-left"><rect x="0" y="510" width="230" height="220"/></clipPath>
-          <clipPath id="mascot-bow"><path d="M1020 610H1185V720L1140 765Q1110 782 1088 717Q1070 740 1020 740Z"/></clipPath>
-          <clipPath id="mascot-ear-right"><path d="M1020 740Q1070 740 1088 717Q1110 782 1140 765L1185 720H1254V970H1020Z"/></clipPath>
+          <mask id="mascot-base-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="1254" height="1254"><path d="M0 229Q35 207 55 227Q68 191 115 173Q180 154 188 181Q193 190 202 166Q244 124 312 130Q379 130 384 154Q390 168 412 163Q429 134 476 144Q543 145 561 184Q577 205 595 188Q615 175 657 195Q716 216 739 250Q743 280 764 274Q785 264 822 291Q873 329 886 371Q890 392 879 401Q872 413 896 420Q917 411 941 447Q974 497 982 533Q987 558 962 575Q975 571 993 602Q1028 655 1021 698Q1016 725 998 736C1064 835 1125 1057 1216 1095Q1174 1130 1114 1111Q1090 1120 1083 1112L1147 1254H0Z" fill="white" stroke="black" stroke-width="10" stroke-linejoin="round"/></mask>
           <linearGradient id="mascot-eye" x2="1" y2="1"><stop stop-color="#141a32"/><stop offset="1" stop-color="#242b49"/></linearGradient>
         </defs>
-        <g transform="translate(50 50) scale(.92)">
         <g data-part="head">
-          <image href="/mascot/head-v2.png" width="1254" height="1254"/>
-          <g data-part="ear-left"><image href="/mascot/accessories-v2.png" width="1254" height="1254" clip-path="url(#mascot-ear-left)"/></g>
-          <g data-part="ear-right"><image href="/mascot/accessories-v2.png" width="1254" height="1254" clip-path="url(#mascot-ear-right)"/></g>
-          <g data-part="tuft"><image href="/mascot/accessories-v2.png" width="1254" height="1254" clip-path="url(#mascot-tuft)"/></g>
-          <g data-part="bow"><image href="/mascot/accessories-v2.png" width="1254" height="1254" clip-path="url(#mascot-bow)"/></g>
+          <image href="/mascot/base.png" width="1254" height="1254" mask="url(#mascot-base-mask)"/>
+          <g data-part="tuft"><image href="/mascot/tuft.svg" width="1254" height="1254"/></g>
+          <g data-part="bow"><image href="/mascot/bow.svg" width="1254" height="1254"/></g>
           <g data-part="gaze">
-            <g transform="translate(464 655) rotate(20)"><g data-part="eye-left"><ellipse rx="46" ry="80" fill="url(#mascot-eye)"/></g><path data-part="lid-left" d="M-42 8Q0 -28 42 8" fill="none" stroke="#222940" stroke-width="11" stroke-linecap="round" opacity="0"/></g>
-            <g transform="translate(785 779) rotate(20)"><g data-part="eye-right"><ellipse rx="45" ry="80" fill="url(#mascot-eye)"/></g><path data-part="lid-right" d="M-41 8Q0 -27 41 8" fill="none" stroke="#222940" stroke-width="11" stroke-linecap="round" opacity="0"/></g>
+            <g transform="translate(206 760) rotate(18)"><g data-part="eye-left"><ellipse rx="61" ry="107" fill="url(#mascot-eye)"/><ellipse cx="-17" cy="-42" rx="10" ry="15" fill="white" opacity=".65"/></g><path data-part="lid-left" d="M-53 10Q0 -33 53 10" fill="none" stroke="#222940" stroke-width="13" stroke-linecap="round" opacity="0"/></g>
+            <g transform="translate(631 908) rotate(18)"><g data-part="eye-right"><ellipse rx="57" ry="103" fill="url(#mascot-eye)"/><ellipse cx="-17" cy="-42" rx="9" ry="14" fill="white" opacity=".65"/></g><path data-part="lid-right" d="M-50 10Q0 -32 50 10" fill="none" stroke="#222940" stroke-width="13" stroke-linecap="round" opacity="0"/></g>
           </g>
-          <g data-part="blush" opacity="0" fill="#f493ac"><ellipse cx="350" cy="745" rx="54" ry="34" transform="rotate(20 350 745)"/><ellipse cx="815" cy="908" rx="52" ry="34" transform="rotate(20 815 908)"/></g>
-        </g>
+          <g data-part="blush" opacity="0" fill="#f493ac"><ellipse cx="57" cy="892" rx="74" ry="36" transform="rotate(20 57 892)"/><ellipse cx="683" cy="1074" rx="68" ry="36" transform="rotate(20 683 1074)"/></g>
         </g>
       </svg>
     </button>`;
@@ -35,7 +28,7 @@
   let failed = false;
   let frame = 0, last = 0, clock = 0, nextBlink = 2 + Math.random() * 3;
   let blinkStart = -10, happyUntil = 0, bounce = 0;
-  let targetX = 0, targetY = 0, x = 0, y = 0, tuft = 0, velocity = 0, bow = 0, bowVelocity = 0, ear = 0, earVelocity = 0;
+  let targetX = 0, targetY = 0, x = 0, y = 0, tuft = 0, velocity = 0, bow = 0, bowVelocity = 0;
   let rect = host.getBoundingClientRect();
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const active = () => !failed && !reduced.matches && !document.hidden;
@@ -43,7 +36,7 @@
   new ResizeObserver(refreshRect).observe(host);
   window.addEventListener('resize', refreshRect);
   function neutral() {
-    for (const name of ['head','tuft','bow','ear-left','ear-right','gaze','eye-left','eye-right']) parts[name].removeAttribute('transform');
+    for (const name of ['head','tuft','bow','gaze','eye-left','eye-right']) parts[name].removeAttribute('transform');
     for (const name of ['lid-left','lid-right','blush']) parts[name].setAttribute('opacity','0');
   }
   function sync() {
@@ -74,9 +67,9 @@
     const py = event.detail ? (event.clientY - rect.top) / rect.height : .4;
     happyUntil = clock + 1.15; bounce = 1;
     if (py < .3) velocity += 145;
-    else if (px > .73) { bowVelocity += 155; earVelocity += 110; }
+    else if (px > .73) bowVelocity += 155;
     else { velocity += 75; bowVelocity += 65; }
-    velocity = clamp(velocity,-180,180); bowVelocity = clamp(bowVelocity,-180,180); earVelocity = clamp(earVelocity,-100,100);
+    velocity = clamp(velocity,-180,180); bowVelocity = clamp(bowVelocity,-180,180);
   });
   function tick(now) {
     if (!active()) { frame = 0; return; }
@@ -88,15 +81,11 @@
     velocity += ((tuftTarget - tuft) * 65 - velocity * 9) * dt; tuft += velocity * dt;
     const bowTarget = -x * 5 + Math.sin(clock * 2.7 + 1) * 2.5;
     bowVelocity += ((bowTarget - bow) * 75 - bowVelocity * 10) * dt; bow += bowVelocity * dt;
-    const earTarget = -x * 4 + Math.sin(clock * 2.1 + .4) * 1.4;
-    earVelocity += ((earTarget - ear) * 58 - earVelocity * 9) * dt; ear += earVelocity * dt;
     bounce *= Math.exp(-dt * 4);
-    parts.head.setAttribute('transform', `translate(${x * 8} ${Math.sin(clock * 1.6) * 3 + y * 5 - bounce * 18}) rotate(${x * 2.4} 627 1080)`);
-    parts.tuft.setAttribute('transform', `rotate(${clamp(tuft,-9,9)} 686 272)`);
-    parts.bow.setAttribute('transform', `rotate(${clamp(bow,-5,5)} 1090 714)`);
-    parts['ear-left'].setAttribute('transform', `rotate(${clamp(-ear,-3,3)} 181 575)`);
-    parts['ear-right'].setAttribute('transform', `rotate(${clamp(ear,-3,3)} 1088 746)`);
-    parts.gaze.setAttribute('transform', `translate(${x * 12} ${y * 9})`);
+    parts.head.setAttribute('transform', `translate(${x * 8} ${Math.sin(clock * 1.6) * 3 + y * 5 - bounce * 18}) rotate(${x * 2.4} 460 1080)`);
+    parts.tuft.setAttribute('transform', `rotate(${tuft} 472 272)`);
+    parts.bow.setAttribute('transform', `rotate(${bow} 1022 818)`);
+    parts.gaze.setAttribute('transform', `translate(${x * 19} ${y * 13})`);
     if (clock >= nextBlink) { blinkStart = clock; nextBlink = clock + 2.6 + Math.random() * 4; }
     const blinkAge = clock - blinkStart;
     const blink = blinkAge < .19 ? 1 - Math.sin(blinkAge / .19 * Math.PI) * .97 : 1;
@@ -109,10 +98,8 @@
     frame = requestAnimationFrame(tick);
   }
   // If the layer fails to load, keep the original illustration instead of a partial face.
-  for (const file of ['head-v2.png', 'accessories-v2.png']) {
-    const layer = new Image();
-    layer.onerror = () => { failed = true; sync(); host.remove(); document.querySelector('.backdrop-character').style.display = 'block'; };
-    layer.src = `/mascot/${file}`;
-  }
+  const base = new Image();
+  base.onerror = () => { failed = true; sync(); host.remove(); document.querySelector('.backdrop-character').style.display = 'block'; };
+  base.src = '/mascot/base.png';
   sync();
 })();
