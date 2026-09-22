@@ -79,9 +79,11 @@ function hasInstall(dir) {
 
 export function safeDataDir(dir) {
   if (typeof dir !== 'string' || !dir.trim()) throw new Error('版本目录不能为空')
-  const resolved = resolve(dir.trim())
-  if (!isAbsolute(resolved)) throw new Error('请使用绝对路径')
-  return resolved
+  const trimmed = dir.trim()
+  // 先判再 resolve：resolve 会把相对路径按当前工作目录补齐，补完就永远是绝对路径，
+  // 倒过来判等于没有这条校验——用户在设置页填个 dsh-data 会安静地落到启动器所在目录
+  if (!isAbsolute(trimmed)) throw new Error('请使用绝对路径')
+  return resolve(trimmed)
 }
 
 export function fallbackDataDir() {
