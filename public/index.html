@@ -869,8 +869,15 @@
               <option value="en">English</option>
             </select>
           </label>
+          <label class="field"><span data-i18n="Web 绑定">Web 绑定</span>
+            <select id="webBind">
+              <option value="loopback" data-i18n="回环（127.0.0.1）">回环（127.0.0.1）</option>
+              <option value="lan" data-i18n="局域网（0.0.0.0）">局域网（0.0.0.0）</option>
+            </select>
+          </label>
+          <p class="hint" id="webBindHint"></p>
           <label class="field wide"><span data-i18n="额外启动参数">额外启动参数</span><input id="args" type="text" spellcheck="false" autocomplete="off" placeholder="例如：--log-level debug" /></label>
-          <p class="hint" data-i18n="追加到 dsh 命令行末尾（空格分词，含空格的值用引号包起来）。已装的插件、数据不受影响。">追加到 dsh 命令行末尾（空格分词，含空格的值用引号包起来）。已装的插件、数据不受影响。</p>
+          <p class="hint" data-i18n="追加到 dsh 命令行末尾（空格分词，含空格的值用引号包起来）；DSH.exe 命令行上带的参数排在这些之后，更具体、可覆盖前者。已装的插件、数据不受影响。">追加到 dsh 命令行末尾（空格分词，含空格的值用引号包起来）；DSH.exe 命令行上带的参数排在这些之后，更具体、可覆盖前者。已装的插件、数据不受影响。</p>
           <label class="field wide"><span data-i18n="版本目录">版本目录</span>
             <span class="row-input">
               <input id="dataDir" type="text" />
@@ -944,10 +951,16 @@
   "管理页端口": "Manager port",
   "终端": "Log",
   "设置": "Settings",
-  "追加到 dsh 命令行末尾（空格分词，含空格的值用引号包起来）。已装的插件、数据不受影响。": "Appended to the end of the dsh command line (split on spaces; quote values with spaces). Installed plugins and data are unaffected.",
+  "追加到 dsh 命令行末尾（空格分词，含空格的值用引号包起来）；DSH.exe 命令行上带的参数排在这些之后，更具体、可覆盖前者。已装的插件、数据不受影响。": "Appended to the end of the dsh command line (split on spaces; quote values with spaces). Arguments passed on the DSH.exe command line come after these and are more specific, so they win. Installed plugins and data are unaffected.",
   "重启": "Restart",
   "额外启动参数": "Extra startup arguments",
   "界面语言": "Interface language",
+  "Web 绑定": "Web binding",
+  "回环（127.0.0.1）": "Loopback (127.0.0.1)",
+  "局域网（0.0.0.0）": "LAN (0.0.0.0)",
+  "远程访问插件的「局域网访问」开关已打开，当前按局域网处理（启动器不注入 --host）。想只允许本机访问，去 dsh 设置里关掉那个开关。": "The remote-access plugin's LAN switch is on, so this runs as LAN (the launcher injects no --host). To allow this machine only, turn that switch off in the dsh settings.",
+  "回环：只有本机能访问（默认）。局域网：启动器不再固定注入 --host 127.0.0.1，实际绑定由远程访问插件的「局域网访问」开关（或 profile 补丁）决定，手机/其他电脑才能连上。": "Loopback: this machine only (default). LAN: the launcher stops injecting --host 127.0.0.1, and the remote-access plugin's LAN switch (or the profile patch) decides the bind, so phones and other computers can connect.",
+  "已保存。Web 绑定更改在下次启动 dsh 时生效。": "Saved. The Web binding change takes effect the next time dsh starts.",
   "没有可开关的加载行（客户端插件，由插件市场管理）": "No toggleable loader row (client plugin, managed by the marketplace)",
   "官方组件，不提供开关": "Official component, no toggle",
   "市场自管行，不提供开关": "Marketplace-managed row, no toggle",
@@ -2092,6 +2105,8 @@
     const portHint = document.getElementById('portHint')
     const argsEl = document.getElementById('args')
     const uiLangEl = document.getElementById('uiLang')
+    const webBindEl = document.getElementById('webBind')
+    const webBindHint = document.getElementById('webBindHint')
     const pickDirEl = document.getElementById('pickDir')
     const dataDirEl = document.getElementById('dataDir')
     const dataDirHint = document.getElementById('dataDirHint')
@@ -2101,6 +2116,13 @@
     function fillSettings(data) {
       if ('args' in data) argsEl.value = String(data.args ?? '')
       if ('lang' in data) uiLangEl.value = data.lang === 'en' ? 'en' : 'zh'
+      if ('webBind' in data) webBindEl.value = data.webBind === 'lan' ? 'lan' : 'loopback'
+      // 远程插件的「局域网访问」开关压着设置值时如实说明，别让用户以为选错了没生效
+      if (webBindHint) {
+        webBindHint.textContent = data.webBindLan
+          ? t('远程访问插件的「局域网访问」开关已打开，当前按局域网处理（启动器不注入 --host）。想只允许本机访问，去 dsh 设置里关掉那个开关。')
+          : t('回环：只有本机能访问（默认）。局域网：启动器不再固定注入 --host 127.0.0.1，实际绑定由远程访问插件的「局域网访问」开关（或 profile 补丁）决定，手机/其他电脑才能连上。')
+      }
       if ('profile' in data) {
         const list = Array.isArray(data.profiles) && data.profiles.length ? data.profiles : [String(data.profile ?? 'web')]
         profileEl.innerHTML = list.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')
@@ -2159,10 +2181,12 @@
       saveSettingsEl.disabled = true
       settingsHint.textContent = t('正在保存…')
       const dirBefore = dataDirEl.value.trim()
+      const bindBefore = webBindEl.value
       try {
         const data = await post('/api/settings', {
           profile: profileEl.value.trim(),
           args: argsEl.value,
+          webBind: webBindEl.value,
           lang: uiLangEl.value,
           port: Number(portEl.value),
           // 留空表示不改：服务端只在有值时才热切换版本目录
@@ -2182,6 +2206,8 @@
         // 管理页还监听在旧端口上：换端口得重启启动器（窗口和托盘都是它开的）
         if (Number(data.port) !== Number(data.listenPort)) {
           settingsHint.textContent = t('已保存。重启启动器后管理页改到 {port} 端口。', { port: data.port })
+        } else if (bindBefore !== data.webBind) {
+          settingsHint.textContent = t('已保存。Web 绑定更改在下次启动 dsh 时生效。')
         } else if (dirBefore && data.dataDir && normDir(data.dataDir) !== normDir(dirBefore)) {
           settingsHint.textContent = t('已保存。版本目录已改为 {dir}（立即生效）；已安装的版本不会自动迁移，需要就手动复制过去。', { dir: data.dataDir })
         } else {
