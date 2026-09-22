@@ -594,18 +594,42 @@ function dshEnv(version) {
   return env
 }
 
+/** 某个 PATH 条目里是否已经能直接调到这个命令（Windows 上按 PATHEXT 补后缀猜）。 */
+function hasCommand(dir, name) {
+  const exts = process.platform === 'win32'
+    ? ['', ...String(process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)]
+    : ['']
+  return exts.some((ext) => existsSync(join(dir, name + ext)))
+}
+
+/**
+ * 自带运行时的 PATH 排序（纯函数；目录是否真的存在由调用方判断）。
+ *
+ * 自带目录默认排最前，但系统 PATH 里**已经有 pnpm** 时例外：自带的 pnpm 8 默认
+ * store 是 v3，而 pnpm 10/11 用 v11。比启动器装得还早的 profile，`.modules.yaml`
+ * 里记的是当年那个全局 pnpm 的 v11 store；把自带 pnpm 顶到前面，pnpm 发现 store
+ * 对不上就以 ERR_PNPM_UNEXPECTED_STORE 拒绝一切 add/remove，插件页的卸载、更新
+ * 全红（#12）。所以 pnpm 让系统的优先，node/npm 仍用自带的（插件里的原生模块
+ * 指望它构建）——自带目录整体紧随其后，系统没有 pnpm 时行为照旧。
+ */
+export function orderRuntimePaths(parts, dir) {
+  const rest = parts.filter((item) => item !== dir)
+  const pnpmDir = rest.find((item) => hasCommand(item, 'pnpm'))
+  if (!pnpmDir) return [dir, ...rest]
+  return [pnpmDir, dir, ...rest.filter((item) => item !== pnpmDir)]
+}
+
 /**
  * 把便携运行时的目录放到 PATH 最前面。
  *
  * `dsh plugin` 是 pnpm 的透传器，装插件（含首次预装 dshmarket）必须有 pnpm；机器上
  * 有没有全局 pnpm 全看运气，所以安装包自带一份。另外插件里常带原生模块和 postinstall
- * 构建脚本，也指望能就地找到 node/npm。
+ * 构建脚本，也指望能就地找到 node/npm。系统里已经有 pnpm 时的排序见 orderRuntimePaths。
  */
-function withBundledRuntime(pathValue) {
+export function withBundledRuntime(pathValue) {
   const dir = join(ROOT, 'node')
   if (!existsSync(join(dir, 'node.exe'))) return pathValue
-  const parts = String(pathValue).split(delimiter).filter(Boolean)
-  return [dir, ...parts.filter((item) => item !== dir)].join(delimiter)
+  return orderRuntimePaths(String(pathValue).split(delimiter).filter(Boolean), dir).join(delimiter)
 }
 
 /** 当前 profile 目录。 */
