@@ -1,3 +1,7 @@
+<p align="right">
+  <a href="README.md">中文</a>
+</p>
+
 <p align="center">
   <img src="docs/hero.png" alt="DSH-X" width="880" />
 </p>
@@ -8,10 +12,6 @@
   <a href="https://github.com/yyh-001/DSH-X/releases/latest/download/DSH-Setup.exe">Download</a>
   ·
   <a href="https://github.com/yyh-001/DSH-X">Star</a>
-</p>
-
-<p align="center">
-  <a href="README.md">中文</a> | English
 </p>
 
 A lightweight Windows launcher for DeepSeek Harness. Pick a version, start DSH Web in your system browser.
